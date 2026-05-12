@@ -33,7 +33,7 @@ A **single-turn real-time voice agent** running entirely on your laptop inside D
 
 - WebRTC transport over LiveKit works locally with zero cloud dependency
 - Pipecat's pipeline architecture cleanly separates transport, STT, LLM, and TTS
-- Every intelligence provider (STT / LLM / TTS) is swappable via a single env var — no code changes
+- Every intelligence provider (STT / LLM / TTS) is swappable via a single env var with no code changes
 - Silero VAD handles barge-in interruptions correctly without energy-threshold hacks
 - The session isolation model (one asyncio.Task per call) is crash-safe
 
@@ -49,7 +49,7 @@ A **single-turn real-time voice agent** running entirely on your laptop inside D
 
 ## 2. Repository Structure
 
-```
+```text
 agentOS-poc/
 │
 ├── docker-compose.yml          # Orchestrates all 4 services
@@ -63,7 +63,7 @@ agentOS-poc/
     ├── agent/                  # Python FastAPI + Pipecat service
     │   ├── Dockerfile
     │   ├── requirements.txt
-    │   ├── config.py           # Pydantic settings — all config from env
+    │   ├── config.py           # Pydantic settings; all config from env
     │   ├── main.py             # FastAPI app + session lifecycle
     │   └── pipeline/
     │       ├── agent.py        # Pipecat pipeline definition (core logic)
@@ -116,28 +116,28 @@ These ports must be free on your machine. Check with `lsof -i :<port>` on Mac/Li
 
 You need **at minimum** keys for one STT provider, one TTS provider, and one LLM provider. The defaults (Deepgram + Cartesia + OpenAI) are the recommended starting point.
 
-### Deepgram (STT) — Default
+### Deepgram (STT) - Default
 
 1. Sign up at https://console.deepgram.com
 2. Create a new project
 3. Go to API Keys → Create API Key (give it "Member" role)
-4. Copy the key — it starts with something like `token_...`
+4. Copy the key; it starts with something like `token_...`
 5. Free tier: $200 credit on signup, enough for extensive testing
 
-### Cartesia (TTS) — Default
+### Cartesia (TTS) - Default
 
 1. Sign up at https://play.cartesia.ai
 2. Go to API → API Keys → Create new key
 3. Copy the key
-4. Browse voices at https://play.cartesia.ai/voices — find a voice suitable for Indian English
+4. Browse voices at https://play.cartesia.ai/voices; find a voice suitable for Indian English
 5. Copy the Voice ID (a UUID like `a0e99841-438c-4a64-b679-ae501e7d6091`)
 6. Free tier: generous credits on signup
 
-### OpenAI (LLM) — Default
+### OpenAI (LLM) - Default
 
 1. Sign up at https://platform.openai.com
 2. Go to API Keys → Create new secret key
-3. Copy the key — starts with `sk-...`
+3. Copy the key; starts with `sk-...`
 4. Note: GPT-4o requires a funded account (add $5–10 minimum)
 5. Alternatively use `gpt-4o-mini` in `.env` for lower cost during testing
 
@@ -147,7 +147,7 @@ You need **at minimum** keys for one STT provider, one TTS provider, and one LLM
 2. Go to API Keys → Create Key
 3. Set `LLM_PROVIDER=anthropic` and `LLM_MODEL=claude-sonnet-4-20250514` in `.env`
 
-### Alternative: Google Chirp (STT — better Hinglish)
+### Alternative: Google Chirp (STT - better Hinglish)
 
 Required only if you want to test Google's dialect support:
 
@@ -162,7 +162,7 @@ Required only if you want to test Google's dialect support:
 
 ## 5. Step-by-Step Setup
 
-### Step 1 — Clone and enter the project
+### Step 1 - Clone and enter the project
 
 ```bash
 # If you received this as a zip:
@@ -174,7 +174,7 @@ git clone <your-repo-url>
 cd agentOS-poc
 ```
 
-### Step 2 — Create your `.env` file
+### Step 2 - Create your `.env` file
 
 ```bash
 cp .env.example .env
@@ -183,7 +183,7 @@ cp .env.example .env
 Open `.env` in any editor and fill in your API keys. At minimum:
 
 ```bash
-# Required fields — fill these in
+# Required fields; fill these in
 DEEPGRAM_API_KEY=your_actual_deepgram_key
 CARTESIA_API_KEY=your_actual_cartesia_key
 CARTESIA_VOICE_ID=your_chosen_voice_uuid
@@ -192,7 +192,7 @@ OPENAI_API_KEY=your_actual_openai_key
 
 Leave everything else at its defaults for the first run.
 
-### Step 3 — Build the Docker images
+### Step 3 - Build the Docker images
 
 ```bash
 docker compose build
@@ -200,9 +200,9 @@ docker compose build
 
 This builds the Python agent image. Expect 3–5 minutes on first run (downloading base image + installing Python packages). Subsequent builds are fast due to Docker layer caching.
 
-Watch for any build errors. The most common: pip install failures due to system library mismatches — the Dockerfile already handles these, but if you see errors, check the troubleshooting section.
+Watch for any build errors. The most common: pip install failures due to system library mismatches. The Dockerfile already handles these, but if you see errors, check the troubleshooting section.
 
-### Step 4 — Start all services
+### Step 4 - Start all services
 
 ```bash
 docker compose up
@@ -210,7 +210,7 @@ docker compose up
 
 You should see logs from four services starting. Wait until you see:
 
-```
+```text
 livekit     | INFO  starting server ...
 agent       | INFO  Application startup complete.
 redis       | Ready to accept connections
@@ -224,7 +224,7 @@ docker compose up -d
 docker compose logs -f agent  # Follow just the agent logs
 ```
 
-### Step 5 — Verify services are running
+### Step 5 - Verify services are running
 
 ```bash
 # Check all containers are up
@@ -248,22 +248,22 @@ Expected health response:
 }
 ```
 
-### Step 6 — Open the browser UI
+### Step 6 - Open the browser UI
 
 Navigate to: **http://localhost:3000**
 
 You should see the dark UI with a blue orb and "Ready to connect" status.
 
-### Step 7 — Start a voice session
+### Step 7 - Start a voice session
 
 1. Click **"Connect to Aria"**
-2. Your browser will ask for microphone permission — allow it
-3. The orb turns blue and pulses — you're live
+2. Your browser will ask for microphone permission; allow it
+3. The orb turns blue and pulses; you're live
 4. Speak in English or Hinglish
 5. The agent responds with voice (and transcript appears in the panel)
 6. Click **Disconnect** to end the session
 
-### Step 8 — Confirm it works end-to-end
+### Step 8 - Confirm it works end-to-end
 
 Try saying: _"Namaste, mera naam Arjun hai. What can you help me with?"_
 
@@ -277,22 +277,22 @@ The agent should respond within ~2–3 seconds (first response is slightly slowe
 
 Defines four services:
 
-**livekit** — The WebRTC SFU. Handles all real-time audio routing between the browser and your agent. Runs in `--dev` mode which auto-accepts the dev API keys defined in `livekit.yaml`. Exposes 7880 (HTTP/WS), 7881 (TCP RTC), 7882/udp (UDP RTC).
+**livekit** - The WebRTC SFU. Handles all real-time audio routing between the browser and your agent. Runs in `--dev` mode which auto-accepts the dev API keys defined in `livekit.yaml`. Exposes 7880 (HTTP/WS), 7881 (TCP RTC), 7882/udp (UDP RTC).
 
-**redis** — Session state store. Currently used for pub/sub scaffolding. In this POC it's mostly a placeholder — the session registry lives in-memory in `main.py`. When you scale to multiple agent replicas, you'll move the registry here.
+**redis** - Session state store. Currently used for pub/sub scaffolding. In this POC it's mostly a placeholder. The session registry lives in-memory in `main.py`. When you scale to multiple agent replicas, you'll move the registry here.
 
-**agent** — The FastAPI + Pipecat Python service. This is the brain. It mounts the `./services/agent` directory as a volume, so code changes hot-reload via uvicorn without rebuilding the image.
+**agent** - The FastAPI + Pipecat Python service. This is the brain. It mounts the `./services/agent` directory as a volume, so code changes hot-reload via uvicorn without rebuilding the image.
 
-**frontend** — A plain nginx container serving the single `index.html`. No build step needed. If you modify `index.html`, nginx picks up changes immediately.
+**frontend** - A plain nginx container serving the single `index.html`. No build step needed. If you modify `index.html`, nginx picks up changes immediately.
 
 ### `infra/livekit.yaml`
 
 LiveKit server configuration for local development. Key settings:
 
-- `keys: devkey: devsecret` — the dev API key pair. These must match `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in `.env`
-- `rtc.use_external_ip: false` — critical for local dev; prevents LiveKit from trying to discover a public IP
-- `interfaces` — lists network interfaces for ICE candidate gathering. Add your machine's interface name if WebRTC connection fails
-- `turn.enabled: false` — TURN relay is not needed on localhost
+- `keys: devkey: devsecret` - the dev API key pair. These must match `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in `.env`
+- `rtc.use_external_ip: false` - critical for local dev; prevents LiveKit from trying to discover a public IP
+- `interfaces` - lists network interfaces for ICE candidate gathering. Add your machine's interface name if WebRTC connection fails
+- `turn.enabled: false` - TURN relay is not needed on localhost
 
 For production, you will replace this file with a config that enables TURN, sets a real domain, and uses proper key rotation.
 
@@ -302,8 +302,8 @@ All configuration lives here as a Pydantic `Settings` class. Every field maps 1:
 
 Key settings to understand:
 
-- `LIVEKIT_URL` vs `LIVEKIT_PUBLIC_URL` — two different URLs for the same LiveKit server. `LIVEKIT_URL` is used by the agent container internally (uses Docker service name `livekit`). `LIVEKIT_PUBLIC_URL` is returned to the browser and must be reachable from outside Docker (`localhost`).
-- `AGENT_LANGUAGE` — passed to Deepgram. `"multi"` enables automatic language detection. Use `"hi"` for Hindi-only, `"en-US"` for English-only.
+- `LIVEKIT_URL` vs `LIVEKIT_PUBLIC_URL` - two different URLs for the same LiveKit server. `LIVEKIT_URL` is used by the agent container internally (uses Docker service name `livekit`). `LIVEKIT_PUBLIC_URL` is returned to the browser and must be reachable from outside Docker (`localhost`).
+- `AGENT_LANGUAGE` - passed to Deepgram. `"multi"` enables automatic language detection. Use `"hi"` for Hindi-only, `"en-US"` for English-only.
 
 ### `services/agent/main.py`
 
@@ -888,5 +888,4 @@ These decisions were made for the POC. Each has a documented rationale and upgra
 
 ---
 
-_Document version: 0.1.0 — matches POC code tagged `poc/v0.1`_  
-_Maintainer: AvestaLabs Engineering_
+Document version: 0.1.0 
