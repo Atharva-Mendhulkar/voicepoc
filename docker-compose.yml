@@ -1,0 +1,51 @@
+version: '3.8'
+
+services:
+  livekit:
+    image: livekit/livekit-server:v1.11.0
+    command: --config /etc/livekit.yaml --dev
+    volumes:
+      - ./infra/livekit.yaml:/etc/livekit.yaml
+    ports:
+      - "7880:7880"           # HTTP/WS signaling
+      - "7881:7881"           # RTC TCP fallback
+      - "7882-7982:7882-7982/udp"   # UDP media — matches port_range above
+    networks:
+      - poc_network
+
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    networks:
+      - poc_network
+
+  agent:
+    build: ./services/agent
+    volumes:
+      - ./services/agent:/app
+    env_file: .env
+    environment:
+      - PYTHONUNBUFFERED=1
+    ports:
+      - "8080:8080"
+    depends_on:
+      - livekit
+      - redis
+    networks:
+      - poc_network
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+
+  frontend:
+    image: nginx:alpine
+    volumes:
+      - ./services/frontend:/usr/share/nginx/html
+    ports:
+      - "3000:80"
+    networks:
+      - poc_network
+
+networks:
+  poc_network:
+    driver: bridge
