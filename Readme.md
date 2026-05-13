@@ -22,6 +22,7 @@
 12. [POC Extended](#12-extending-the-poc)
 13. [Production Readiness check](#13-production-readiness-checklist)
 14. [Architecture Decision Log](#14-architecture-decision-log)
+15. [System Architecture](#15-system-architecture)
 
 ---
 
@@ -44,6 +45,52 @@ A **single-turn real-time voice agent** running entirely on your laptop inside D
 - Kubernetes / KEDA (next phase)
 - PII redaction pipeline (next phase)
 - Multi-agent orchestration (future)
+
+---
+
+## 15. System Architecture
+
+### Architectural Flow
+```mermaid
+graph TD
+    User([User Voice]) --> Transport[Transport Layer: WebRTC]
+    Transport --> LiveKit[LiveKit SFU / Room Mgmt]
+    LiveKit --> Runtime[Voice Runtime: Pipecat Orchestrator]
+    
+    subgraph "Audio Processing Pipeline"
+        Runtime --> VAD[Silero VAD / Resampling]
+        VAD --> STT[Deepgram STT]
+    end
+    
+    STT --> LLM[LLM: Ollama / Qwen]
+    LLM --> TTS[TTS: Cartesia]
+    
+    TTS --> TransportOut[LiveKit Output Transport]
+    TransportOut --> User
+    
+    subgraph "Future Integration Layers"
+        SIP[SIP Trunks / PSTN]
+        Temporal[Temporal Workflows]
+        Tools[Tool Calling / CRM]
+    end
+```
+
+### 12-Layer Implementation Status
+
+| Layer | Component | Status | Details |
+| :--- | :--- | :--- | :--- |
+| **1** | **User Voice** | ✅ | Browser Microphone input |
+| **2** | **Transport** | ✅ | WebRTC (LiveKit) |
+| **3** | **LiveKit / Telephony** | 🟢 | SFU, Room/Participant Mgmt active. SIP/PSTN/Carrier routing is **Roadmap**. |
+| **4** | **Voice Runtime** | ✅ | Pipecat 1.1.0 Orchestrator (Session, Lifecycle, Barge-in) |
+| **5** | **Audio Pipeline** | ✅ | Silero VAD, Real-time chunking, Resampling |
+| **6** | **STT** | ✅ | Deepgram Streaming (Multilingual/Hinglish) |
+| **7** | **LLM / Thinking** | 🟢 | Ollama (Local) / OpenAI. RAG & Guardrails are **Roadmap**. |
+| **8** | **Tool Calling** | ❌ | Supported by Pipecat; implementation is **Roadmap**. |
+| **9** | **Temporal Workflows**| ❌ | Persistence & Failure Recovery is **Roadmap**. |
+| **10**| **TTS** | ✅ | Cartesia Streaming (Low-latency synthesis) |
+| **11**| **Streaming Output** | ✅ | Jitter compensation & Adaptive playback (LiveKit) |
+| **12**| **User Playback** | ✅ | Browser Audio Playback |
 
 ---
 
