@@ -1,7 +1,7 @@
 # VOICE POC 
 
 **POC Scope:** Browser WebRTC voice agent, India language profile  
-**Stack:** LiveKit · Pipecat · Deepgram Nova-3 · Cartesia Sonic · Gemini · Redis  
+**Stack:** LiveKit · Pipecat 1.1.0 · Deepgram Nova-3 · Cartesia Sonic · Ollama (Qwen) · Redis  
 **Infra:** Docker Compose (local dev)
 
 ---
@@ -133,8 +133,13 @@ You need **at minimum** keys for one STT provider, one TTS provider, and one LLM
 5. Copy the Voice ID (a UUID like `a0e99841-438c-4a64-b679-ae501e7d6091`)
 6. Free tier: generous credits on signup
 
-### OpenAI (LLM) - Default
+### Ollama (Local LLM) - Recommended for Dev
+1. Install Ollama from https://ollama.com
+2. Pull the Qwen model: `ollama pull qwen3.5:9b`
+3. The agent connects to Ollama via `http://host.docker.internal:11434/v1`
+4. No API key required for local testing!
 
+### OpenAI (LLM) - Alternative
 1. Sign up at https://platform.openai.com
 2. Go to API Keys → Create new secret key
 3. Copy the key; starts with `sk-...`
@@ -183,11 +188,14 @@ cp .env.example .env
 Open `.env` in any editor and fill in your API keys. At minimum:
 
 ```bash
-# Required fields; fill these in
+# Required fields for cloud providers
 DEEPGRAM_API_KEY=your_actual_deepgram_key
 CARTESIA_API_KEY=your_actual_cartesia_key
 CARTESIA_VOICE_ID=your_chosen_voice_uuid
-OPENAI_API_KEY=your_actual_openai_key
+
+# LLM Selection (ollama / openai / anthropic)
+LLM_PROVIDER=ollama
+LLM_MODEL=qwen3.5:9b
 ```
 
 Leave everything else at its defaults for the first run.
@@ -242,7 +250,7 @@ Expected health response:
   "providers": {
     "stt": "deepgram",
     "tts": "cartesia",
-    "llm": "openai"
+    "llm": "ollama"
   },
   "active_sessions": 0
 }
@@ -289,10 +297,10 @@ Defines four services:
 
 LiveKit server configuration for local development. Key settings:
 
-- `keys: devkey: devsecret` - the dev API key pair. These must match `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in `.env`
-- `rtc.use_external_ip: false` - critical for local dev; prevents LiveKit from trying to discover a public IP
-- `interfaces` - lists network interfaces for ICE candidate gathering. Add your machine's interface name if WebRTC connection fails
-- `turn.enabled: false` - TURN relay is not needed on localhost
+- `keys: devkey: devsecret-32-character...` - the dev API key pair. These must match `LIVEKIT_API_KEY` and `LIVEKIT_API_SECRET` in `.env`.
+- `rtc.use_external_ip: false` - critical for local dev.
+- `rtc.node_ip: 127.0.0.1` - forces LiveKit to advertise the host loopback so the browser can reach it from outside Docker.
+- `turn.enabled: false` - TURN relay is not needed on localhost.
 
 For production, you will replace this file with a config that enables TURN, sets a real domain, and uses proper key rotation.
 
@@ -779,15 +787,16 @@ async def join_session(req):
 In `pipeline/agent.py`, add a Pipecat observer to log every transcript:
 
 ```python
-from pipecat.observers.base_observer import BaseObserver
+from pipecat.observers.base_observer import BaseObserver, FramePushed
 from pipecat.frames.frames import TranscriptionFrame, TTSTextFrame
 
 class TranscriptLogger(BaseObserver):
-    async def on_push_frame(self, src, dst, frame, direction, timestamp):
+    async def on_push_frame(self, data: FramePushed):
+        frame = data.frame
         if isinstance(frame, TranscriptionFrame):
-            logger.info("transcript.user", text=frame.text, session_id=session_id)
+            logger.info(f"transcript.user: {frame.text}")
         elif isinstance(frame, TTSTextFrame):
-            logger.info("transcript.agent", text=frame.text, session_id=session_id)
+            logger.info(f"transcript.agent: {frame.text}")
 
 # In run_agent_session, before creating the runner:
 task.add_observer(TranscriptLogger())
