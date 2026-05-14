@@ -1,6 +1,7 @@
 import asyncio
 import json
 import logging
+import time
 
 from pipecat.audio.vad.silero import SileroVADAnalyzer
 from pipecat.audio.vad.vad_analyzer import VADParams
@@ -24,10 +25,20 @@ from pipeline.providers.tts import create_tts_service
 
 logger = logging.getLogger("uvicorn")
 
+# Optimized System Prompt for Voice Latency
+SYSTEM_PROMPT = """You are Aria, a fast and helpful AI voice assistant. 
+CRITICAL: Be extremely concise. Use 10-15 words MAXIMUM per response. 
+Avoid lists, bullet points, or long explanations. 
+Speak naturally like a human in a quick conversation. 
+If the user speaks Hindi, respond in simple Hindi or Hinglish."""
+
 
 async def run_agent_session(session_id: str, room_name: str, agent_token: str):
     logger.info(f"pipeline.init session_id={session_id}")
 
+    # Latency Tuning (Aggressive):
+    vad_stop_secs = 0.3 
+    
     transport = LiveKitTransport(
         url=settings.livekit_url,
         token=agent_token,
@@ -40,7 +51,7 @@ async def run_agent_session(session_id: str, room_name: str, agent_token: str):
             vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(
                 params=VADParams(
-                    stop_secs=0.5,
+                    stop_secs=vad_stop_secs,
                     min_volume=0.2,
                     confidence=0.7,
                 )
@@ -53,14 +64,13 @@ async def run_agent_session(session_id: str, room_name: str, agent_token: str):
     tts = create_tts_service()
     llm = create_llm_service()
 
-    # Context holds the conversation history
-    context = LLMContext()
+    # Initialize context with System Prompt
+    context = LLMContext([{"role": "system", "content": SYSTEM_PROMPT}])
     
-    # Modern pattern for context aggregators in 1.1.0
     context_aggregator = LLMContextAggregatorPair(
         context,
         user_params=LLMUserAggregatorParams(
-            user_turn_stop_timeout=0.6
+            user_turn_stop_timeout=0.4 # Slightly above stop_secs for stability
         )
     )
 
@@ -84,62 +94,44 @@ async def run_agent_session(session_id: str, room_name: str, agent_token: str):
         ),
     )
 
-    # ── Greeting ──────────────────────────────────────────────────────────────
+    @task.event_handler("on_metrics")
+    async def on_metrics(task, metrics):
+        logger.info(f"latency.metrics session_id={session_id} metrics={metrics}")
+
     @transport.event_handler("on_first_participant_joined")
     async def on_first_participant_joined(transport, participant):
-        # participant can be a string (identity) or an object depending on the version
         identity = getattr(participant, "identity", str(participant))
         logger.info(f"participant.joined session_id={session_id} identity={identity}")
-        # In 1.1.0, capture is handled automatically by transport.input() or room settings
         
-        # Send a direct text greeting (bypasses STT/LLM — instant TTS)
-        greeting = TextFrame("Namaste! I'm Aria. How can I help you today?")
+        greeting = TextFrame("Namaste! I'm Aria. How can I help?")
         await task.queue_frames([greeting])
 
-    # ── Transcript broadcast ───────────────────────────────────────────────────
     class TranscriptBroadcaster(BaseObserver):
-        """Watches frames flowing through the pipeline and relays transcripts
-        back to the browser via LiveKit data messages."""
-
         def __init__(self):
             super().__init__()
             self._last_agent_turn: list[str] = []
 
         async def on_push_frame(self, data: FramePushed):
             frame = data.frame
-            
-            # User said something
             if isinstance(frame, TranscriptionFrame) and frame.text.strip():
-                payload = json.dumps(
-                    {"type": "transcription", "participant": "user", "text": frame.text}
-                )
+                payload = json.dumps({"type": "transcription", "participant": "user", "text": frame.text})
                 await transport.send_message(payload)
-                logger.debug(f"transcript.user text={frame.text!r}")
-
-            # Agent TTS text chunk
             if isinstance(frame, TTSTextFrame) and frame.text.strip():
                 self._last_agent_turn.append(frame.text)
-
-            # Agent turn finished — broadcast accumulated text
             if isinstance(frame, LLMFullResponseEndFrame):
                 full_text = " ".join(self._last_agent_turn).strip()
                 if full_text:
-                    payload = json.dumps(
-                        {"type": "transcription", "participant": "agent", "text": full_text}
-                    )
+                    payload = json.dumps({"type": "transcription", "participant": "agent", "text": full_text})
                     await transport.send_message(payload)
-                    logger.debug(f"transcript.agent text={full_text!r}")
                 self._last_agent_turn = []
 
     task.add_observer(TranscriptBroadcaster())
 
-    # ── Participant left ───────────────────────────────────────────────────────
     @transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant, *args):
         logger.info(f"participant.left session_id={session_id}")
         await task.cancel()
 
-    # ── Run ───────────────────────────────────────────────────────────────────
     runner = PipelineRunner()
     try:
         await runner.run(task)

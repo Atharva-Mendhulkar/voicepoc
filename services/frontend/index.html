@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Aria Voice - Light</title>
+    <title>Voice - Light</title>
     <style>
         body {
             background-color: #f5f7fa;
@@ -79,7 +79,7 @@
 <body>
 
 <div class="container">
-    <h1>Aria Voice Assistant</h1>
+    <h1>Voice Assistant</h1>
     <div id="status">Ready</div>
     
     <div id="transcript">
@@ -109,7 +109,7 @@
         }
         const div = document.createElement('div');
         div.className = `msg ${role}`;
-        div.innerText = (role === 'user' ? 'You: ' : 'Aria: ') + text;
+        div.innerText = (role === 'user' ? 'You: ' : 'Agent: ') + text;
         transcriptEl.appendChild(div);
         transcriptEl.scrollTop = transcriptEl.scrollHeight;
     }
