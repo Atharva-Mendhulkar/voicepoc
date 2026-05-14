@@ -1,7 +1,7 @@
 # VOICE POC 
 
 **POC Scope:** Browser WebRTC voice agent, India language profile  
-**Stack:** LiveKit · Pipecat 1.1.0 · Deepgram Nova-3 · Cartesia Sonic · Ollama (Qwen) · Redis  
+**Stack:** LiveKit · Pipecat 1.1.0 · Deepgram Nova-3 · Cartesia Sonic · OpenAI (gpt-4o-mini) · Redis  
 **Infra:** Docker Compose (local dev)
 
 ---
@@ -62,7 +62,7 @@ graph TD
         VAD --> STT[Deepgram STT]
     end
     
-    STT --> LLM[LLM: Ollama / Qwen]
+    STT --> LLM[LLM: OpenAI / Ollama]
     LLM --> TTS[TTS: Cartesia]
     
     TTS --> TransportOut[LiveKit Output Transport]
@@ -113,7 +113,7 @@ agentOS-poc/
     │   ├── config.py           # Pydantic settings; all config from env
     │   ├── main.py             # FastAPI app + session lifecycle
     │   └── pipeline/
-    │       ├── agent.py        # Pipecat pipeline definition (core logic)
+    │       ├── agent.py        # Pipecat pipeline + Latency Tuning (0.3s VAD)
     │       └── providers/
     │           ├── stt.py      # STT abstraction (Deepgram / Google Chirp)
     │           ├── tts.py      # TTS abstraction (Cartesia / ElevenLabs)
@@ -190,8 +190,8 @@ You need **at minimum** keys for one STT provider, one TTS provider, and one LLM
 1. Sign up at https://platform.openai.com
 2. Go to API Keys → Create new secret key
 3. Copy the key; starts with `sk-...`
-4. Note: GPT-4o requires a funded account (add $5–10 minimum)
-5. Alternatively use `gpt-4o-mini` in `.env` for lower cost during testing
+4. Note: GPT-4o-mini is recommended for the fastest real-time performance.
+5. In `.env`, set `LLM_PROVIDER=openai` and `LLM_MODEL=gpt-4o-mini`.
 
 ### Alternative: Anthropic Claude (LLM)
 
@@ -240,9 +240,9 @@ DEEPGRAM_API_KEY=your_actual_deepgram_key
 CARTESIA_API_KEY=your_actual_cartesia_key
 CARTESIA_VOICE_ID=your_chosen_voice_uuid
 
-# LLM Selection (ollama / openai / anthropic)
-LLM_PROVIDER=ollama
-LLM_MODEL=qwen3.5:9b
+# LLM Selection (openai / ollama / anthropic)
+LLM_PROVIDER=openai
+LLM_MODEL=gpt-4o-mini
 ```
 
 Leave everything else at its defaults for the first run.
@@ -617,10 +617,10 @@ docker compose logs -f agent 2>&1 | grep -E "stt|tts|llm|session"
 |---|---|---|
 |Session join latency|< 500ms|`/session/join` API response time|
 |Agent join to room|< 150ms|agent log: `session.start` → `participant.joined`|
-|VAD stop to STT final|< 300ms|Deepgram streaming — partial → final gap|
-|LLM first token|< 800ms|OpenAI streaming — time to first chunk|
-|TTS TTFA (Cartesia)|< 100ms|Time from text to first audio frame|
-|Total E2E (end of speech → first audio)|< 1500ms|Perceived in browser|
+|VAD stop to STT final|< 300ms|Tuned to 0.3s stop_secs|
+|LLM first token|< 400ms|gpt-4o-mini TTFT|
+|TTS TTFA (Cartesia)|< 150ms|Time from text to first audio frame|
+|Total E2E (end of speech → first audio)|< 800ms|Perceived in browser|
 
 The 1500ms target is achievable on localhost. Over a real network, budget an additional 50–200ms per network hop.
 
