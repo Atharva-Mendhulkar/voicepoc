@@ -21,9 +21,16 @@
       flex-direction: column;
       align-items: center;
       padding: 40px 20px;
-      margin: 0;
       min-height: 100vh;
       box-sizing: border-box;
+    }
+    .layout-wrapper {
+      display: flex;
+      gap: 30px;
+      width: 100%;
+      max-width: 1100px;
+      justify-content: center;
+      align-items: flex-start;
     }
     .main-container {
       background: #ffffff;
@@ -198,8 +205,17 @@
 </head>
 <body>
 
+<div class="layout-wrapper">
 <div class="main-container">
-  <h2>AI Agent</h2>
+  <h2>VREP Session</h2>
+  <div style="margin-bottom: 16px; display: flex; gap: 8px; justify-content: center; align-items: center;">
+    <label style="font-size: 13px; font-weight: 600;">Mode:</label>
+    <select id="modeSelect" style="font-family: 'JetBrains Mono', monospace; border: 2px solid #000; padding: 4px; font-weight: 600;">
+      <option value="1">1: LiveKit-Only</option>
+      <option value="2" selected>2: Pipecat-Only</option>
+      <option value="3">3: Hybrid</option>
+    </select>
+  </div>
   
   <div class="agent-wrapper">
     <div class="agent-circle" id="agent-circle">
@@ -220,6 +236,14 @@
   </div>
   
   <div class="tools-box" id="tools-box"></div>
+</div>
+
+<div class="main-container" style="flex: 1; max-width: 500px; align-items: flex-start; text-align: left; padding: 22px;">
+  <h2 style="font-size: 20px;">Event Timeline</h2>
+  <div id="debug-log" style="width: 100%; height: 420px; overflow-y: auto; font-size: 12px; margin-top: 16px; border: 2px solid #000; padding: 12px; box-sizing: border-box; background: #fafafa;">
+    <div style="color:#777;">Waiting for session...</div>
+  </div>
+</div>
 </div>
 
 <script>
@@ -309,22 +333,65 @@ class SessionController {
       await this.audioContext.resume();
       this.log('AUDIO_CONTEXT_RESUMED');
 
-      const res = await fetch('http://localhost:8080/session/join?t=' + Date.now(), {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ user_identity: 'user-' + Math.floor(Math.random()*1000) }),
+      if (this.debugWs) {
+        this.debugWs.close();
+      }
+
+      const identity = "user-" + Math.floor(Math.random() * 10000);
+      const mode = parseInt(document.getElementById('modeSelect').value);
+      
+      const isProxy = window.location.port === "3000" || window.location.port === "80" || window.location.port === "";
+      const routerUrl = isProxy ? 
+        `${window.location.protocol}//${window.location.host}/session/join` : 
+        `${window.location.protocol}//${window.location.hostname}:8000/session/join`;
+
+      const res = await fetch(routerUrl, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ user_identity: identity, mode: mode })
       });
       const data = await res.json();
+      
+      if (!res.ok) throw new Error(data.detail || "Failed to join session");
 
-      this.room = new LivekitClient.Room();
-      this.setupRoomListeners();
+      this.room = new LivekitClient.Room({
+        adaptiveStream: true,
+        dynacast: true,
+      });
 
+      this._setupRoomEvents();
+      let lkProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+      let lkUrl = isProxy ? `${lkProtocol}//${window.location.host}/livekit` : `${lkProtocol}//${window.location.hostname}:7880`;
+      if (!isProxy && data.livekit_url) {
+        lkUrl = data.livekit_url.replace(/localhost|127\.0\.0\.1|livekit/g, window.location.hostname);
+        if (window.location.protocol === "https:") {
+          lkUrl = lkUrl.replace("ws://", "wss://");
+        }
+      }
+      this.log('CONNECTING_LIVEKIT', lkUrl);
+      console.log("Connecting to LiveKit at:", lkUrl, "Token:", data.token);
+      await this.room.connect(lkUrl, data.token);
+      console.log("LiveKit Room Connected successfully!");
+
+      // Attach any already published audio tracks from remote participants
+      this.room.remoteParticipants.forEach((participant) => {
+        participant.trackPublications.forEach((publication) => {
+          if (publication.track && publication.track.kind === "audio") {
+            this._attachAudioTrack(publication.track);
+          }
+        });
+      });
+
+      this.statusText.innerText = `Connected (Mode ${mode})`;
+      
+      // Setup debug websocket
+      this.setupDebugWebsocket(data.session_id);
+      
       this.chatContainer.innerHTML = '<div style="text-align:center;color:#555555;font-size:13px;margin:auto;">Connected.</div>';
       this.toolsBox.innerHTML = '';
       this.toolsBox.style.display = 'none';
       this.currentAgentBubble = null;
 
-      await this.room.connect(data.livekit_url, data.token);
       await this.room.localParticipant.setMicrophoneEnabled(true, {
         echoCancellation: true,
         noiseSuppression: true,
@@ -335,25 +402,28 @@ class SessionController {
       this.setInteractionState('IDLE');
       this.log('SESSION_CONNECTED');
     } catch (e) {
+      console.error("Connection Failed:", e);
       this.log('ERROR', e.message);
       this.setState('ERROR');
     }
   }
 
-  setupRoomListeners() {
+  _attachAudioTrack(track) {
+    if (track.kind === "audio" && !this.agentAudioElement) {
+      this.agentAudioElement = track.attach();
+      this.agentAudioElement.autoplay = true;
+      this.agentAudioElement.playsInline = true;
+      this.agentAudioElement.setAttribute("x-webkit-airplay", "deny");
+      this.agentAudioElement.preload = "none";
+      document.body.appendChild(this.agentAudioElement);
+      this.agentAudioElement.play().catch(err => this.log('AUDIO_ERROR', err));
+    }
+  }
+
+  _setupRoomEvents() {
     this.room.on(LivekitClient.RoomEvent.TrackSubscribed, async (track, publication, participant) => {
       if (track.kind === "audio") {
-        this.agentAudioElement = track.attach();
-        this.agentAudioElement.autoplay = true;
-        this.agentAudioElement.playsInline = true;
-        this.agentAudioElement.setAttribute("x-webkit-airplay", "deny");
-        this.agentAudioElement.preload = "none";
-        document.body.appendChild(this.agentAudioElement);
-        try {
-          await this.agentAudioElement.play();
-        } catch (err) {
-          this.log('AUDIO_ERROR', err);
-        }
+        this._attachAudioTrack(track);
       }
     });
 
@@ -481,6 +551,45 @@ class SessionController {
     this.isMuted = false;
     this.setState('DISCONNECTED');
     this.setInteractionState('IDLE');
+  }
+
+  setupDebugWebsocket(sessionId) {
+    const logBox = document.getElementById('debug-log');
+    logBox.innerHTML = '';
+    
+    const isProxy = window.location.port === "3000" || window.location.port === "80" || window.location.port === "";
+    let wsProtocol = window.location.protocol === "https:" ? "wss:" : "ws:";
+    let debugUrl = isProxy ? `${wsProtocol}//${window.location.host}/debug/ws?session_id=${sessionId}` : `${wsProtocol}//${window.location.hostname}:8090/ws?session_id=${sessionId}`;
+    this.debugWs = new WebSocket(debugUrl);
+    
+    this.debugWs.onmessage = (msg) => {
+      try {
+        const event = JSON.parse(msg.data);
+        const el = document.createElement('div');
+        el.style.borderBottom = "1px dotted #ccc";
+        el.style.padding = "4px 0";
+        el.style.marginBottom = "4px";
+        
+        let msStr = "";
+        if (event.relative_ms) {
+          const d = new Date(event.relative_ms * 1000);
+          msStr = `[${d.toISOString().split('T')[1].slice(0, 12)}] `;
+        }
+        
+        let typeStr = `<span style="font-weight:600; color:#005cc5;">${event.type}</span>`;
+        let dataStr = "";
+        
+        if (event.text) dataStr = ` <span style="color:#22863a;">"${event.text}"</span>`;
+        else if (event.tool) dataStr = ` <span style="color:#e36209;">${event.tool}()</span>`;
+        else if (event.data) dataStr = ` <span style="color:#666;">${JSON.stringify(event.data)}</span>`;
+        
+        el.innerHTML = `<span style="color:#6a737d;">${msStr}</span> ${typeStr}${dataStr}`;
+        logBox.appendChild(el);
+        logBox.scrollTop = logBox.scrollHeight;
+      } catch (e) {
+        console.error("Error parsing debug event", e);
+      }
+    };
   }
 }
 

@@ -2,12 +2,13 @@ keys:
   devkey: devsecret-32-character-long-secure-secret-key
 
 rtc:
-  use_external_ip: false
-  # Advertise 127.0.0.1 so the browser (also on localhost) can reach it
-  node_ip: 127.0.0.1
+  use_external_ip: true
+  stun_servers:
+    - "stun.l.google.com:19302"
+    - "stun1.l.google.com:19302"
   tcp_port: 7881
   port_range_start: 7882
-  port_range_end: 7982      # 100-port range instead of just 1
+  port_range_end: 7982
 
 logging:
   level: info
