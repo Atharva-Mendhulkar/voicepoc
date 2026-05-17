@@ -21,7 +21,7 @@ from datetime import date
 logger = logging.getLogger("uvicorn")
 
 SYSTEM_PROMPT = """You are a helpful voice appointment assistant. Keep responses short — 1-2 sentences maximum for voice.
-CRITICAL: Speak strictly in standard American English. NEVER use Hindi, Hinglish, or any other language.
+CRITICAL: You are allowed to speak in English, Hindi, or Hinglish depending on what the user speaks. Speak naturally in a conversational tone.
 
 APPOINTMENT BOOKING RULES (follow exactly):
 1. When a user requests an appointment, collect date AND time before calling any tool.
