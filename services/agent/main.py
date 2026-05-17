@@ -6,38 +6,43 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
-
 import livekit.api as livekit_api
 
 from config import settings
-from pipeline.agent import run_agent_session
 
 logger = logging.getLogger("uvicorn")
-
 _sessions: dict[str, asyncio.Task] = {}
+
+
+def _get_runner(session_id: str, room_name: str, agent_token: str):
+    """Return the coroutine for the configured AGENT_MODE."""
+    mode = settings.agent_mode.lower()
+    if mode == "livekit":
+        from modes.livekit_mode import run_session
+    elif mode == "pipecat":
+        from modes.pipecat_mode import run_session
+    elif mode == "hybrid":
+        from modes.hybrid_mode import run_session
+    else:
+        raise ValueError(f"Unknown AGENT_MODE: {mode!r}. Must be livekit | pipecat | hybrid")
+    return run_session(session_id, room_name, agent_token)
 
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
+    logger.info(f"AgentOS starting — mode={settings.agent_mode.upper()}")
     yield
-    # Clean shutdown — cancel all active sessions
-    for session_id, task in list(_sessions.items()):
+    for task in list(_sessions.values()):
         task.cancel()
         try:
             await task
         except asyncio.CancelledError:
             pass
-    logger.info("All sessions cancelled.")
+    logger.info("All sessions drained.")
 
 
 app = FastAPI(lifespan=lifespan)
-
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
+app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 
 class JoinRequest(BaseModel):
@@ -48,6 +53,7 @@ class JoinRequest(BaseModel):
 async def health():
     return {
         "status": "ok",
+        "mode": settings.agent_mode,
         "providers": {
             "stt": settings.stt_provider,
             "tts": settings.tts_provider,
@@ -67,15 +73,12 @@ async def join_session(req: JoinRequest):
     session_id = str(uuid.uuid4())
     room_name = f"room-{session_id}"
 
-    # Mint user token
     user_token = (
         livekit_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(req.user_identity)
         .with_grants(livekit_api.VideoGrants(room_join=True, room=room_name))
         .to_jwt()
     )
-
-    # Mint agent token
     agent_token = (
         livekit_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(f"agent-{session_id}")
@@ -83,26 +86,20 @@ async def join_session(req: JoinRequest):
         .to_jwt()
     )
 
-    # Spawn the pipeline as a background task
     task = asyncio.create_task(
-        run_agent_session(session_id, room_name, agent_token),
+        _get_runner(session_id, room_name, agent_token),
         name=f"session-{session_id}",
     )
     _sessions[session_id] = task
+    task.add_done_callback(lambda t: _sessions.pop(session_id, None))
 
-    def _cleanup(t):
-        _sessions.pop(session_id, None)
-        logger.info(f"session.end session_id={session_id}")
-
-    task.add_done_callback(_cleanup)
-
-    logger.info(f"session.start session_id={session_id} room={room_name}")
-
+    logger.info(f"session.start mode={settings.agent_mode} id={session_id}")
     return {
         "session_id": session_id,
         "room_name": room_name,
         "token": user_token,
         "livekit_url": settings.livekit_public_url,
+        "mode": settings.agent_mode,
     }
 
 
@@ -110,6 +107,6 @@ async def join_session(req: JoinRequest):
 async def end_session(session_id: str):
     task = _sessions.get(session_id)
     if not task:
-        return {"error": "Session not found"}
+        return {"error": "not found"}
     task.cancel()
-    return {"status": "cancelled", "session_id": session_id}
+    return {"cancelled": session_id}

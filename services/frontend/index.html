@@ -1,172 +1,491 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Voice - Light</title>
-    <style>
-        body {
-            background-color: #f5f7fa;
-            color: #333;
-            font-family: -apple-system, sans-serif;
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            justify-content: center;
-            height: 100vh;
-            margin: 0;
-        }
+  <meta charset="UTF-8">
+  <meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+  <meta http-equiv="Pragma" content="no-cache">
+  <meta http-equiv="Expires" content="0">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>AI Agent Assistant</title>
+  <link rel="icon" href="data:,">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:ital,wght@0,400;0,500;0,600;1,400&display=swap" rel="stylesheet">
+  <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+  <style>
+    body {
+      font-family: 'JetBrains Mono', monospace, -apple-system, sans-serif;
+      background: #ffffff;
+      color: #000000;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      padding: 40px 20px;
+      margin: 0;
+      min-height: 100vh;
+      box-sizing: border-box;
+    }
+    .main-container {
+      background: #ffffff;
+      border: 2px solid #000000;
+      padding: 36px 32px;
+      width: 100%;
+      max-width: 560px;
+      text-align: center;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      box-shadow: 8px 8px 0px #000000;
+    }
+    h2 { margin: 0 0 8px 0; font-size: 26px; font-weight: 700; color: #000000; letter-spacing: -0.5px; text-transform: uppercase; }
+    .status { margin-top: 12px; font-size: 14px; font-weight: 500; color: #555555; }
+    
+    .agent-wrapper {
+      position: relative;
+      margin: 28px 0;
+    }
+    .agent-circle {
+      width: 140px;
+      height: 140px;
+      border-radius: 50%;
+      border: 2px dashed #000000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      transition: all 0.4s ease;
+    }
+    .agent-circle.connected {
+      border: 2px solid #000000;
+      animation: rotate 25s linear infinite;
+    }
+    .agent-circle.speaking {
+      border: 4px solid #000000;
+      animation: rotate 12s linear infinite;
+    }
+    .agent-inner {
+      width: 92px;
+      height: 92px;
+      border-radius: 50%;
+      background: #dddddd;
+      transition: all 0.4s ease;
+      border: 2px solid #000000;
+    }
+    .agent-circle.connected .agent-inner {
+      background: #000000;
+    }
+    .agent-circle.speaking .agent-inner {
+      animation: pulse-inner 0.8s infinite alternate cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    @keyframes rotate {
+      from { transform: rotate(0deg); }
+      to { transform: rotate(360deg); }
+    }
+    @keyframes pulse-inner {
+      0% { transform: scale(1); }
+      100% { transform: scale(1.15); }
+    }
+    .agent-circle.thinking .agent-inner {
+      animation: blink-inner 1.2s infinite;
+    }
+    @keyframes blink-inner {
+      0% { opacity: 1; }
+      50% { opacity: 0.3; }
+      100% { opacity: 1; }
+    }
 
-        .container {
-            background: white;
-            padding: 2rem;
-            border-radius: 16px;
-            box-shadow: 0 4px 20px rgba(0,0,0,0.05);
-            width: 90%;
-            max-width: 500px;
-            text-align: center;
-        }
+    .controls {
+      margin: 20px 0 28px 0;
+      display: flex;
+      gap: 16px;
+      justify-content: center;
+      width: 100%;
+    }
+    .btn-primary {
+      font-family: 'JetBrains Mono', monospace;
+      background: #000000;
+      color: #ffffff;
+      border: 2px solid #000000;
+      padding: 14px 32px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      text-transform: uppercase;
+    }
+    .btn-primary:hover:not(:disabled) { background: #333333; }
+    .btn-primary:disabled { background: #aaaaaa; border-color: #aaaaaa; cursor: not-allowed; }
+    
+    .btn-endcall {
+      font-family: 'JetBrains Mono', monospace;
+      background: #ffffff;
+      color: #000000;
+      border: 2px solid #000000;
+      padding: 14px 32px;
+      cursor: pointer;
+      font-size: 15px;
+      font-weight: 600;
+      transition: all 0.2s ease;
+      display: none;
+      text-transform: uppercase;
+    }
+    .btn-endcall:hover { background: #f0f0f0; }
 
-        h1 { font-size: 1.5rem; margin-bottom: 1.5rem; color: #4a90e2; }
+    .chat-container {
+      width: 100%;
+      background: #ffffff;
+      border: 2px solid #000000;
+      padding: 22px;
+      min-height: 220px;
+      max-height: 360px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 14px;
+      box-sizing: border-box;
+      text-align: left;
+    }
+    .message {
+      max-width: 85%;
+      padding: 14px 18px;
+      font-size: 14px;
+      line-height: 1.5;
+      word-break: break-word;
+      border: 2px solid #000000;
+    }
+    .message .sender {
+      font-size: 12px;
+      font-weight: 700;
+      margin-bottom: 6px;
+      text-transform: uppercase;
+      border-bottom: 1px solid #000000;
+      padding-bottom: 4px;
+    }
+    .message.user {
+      align-self: flex-end;
+      background: #f5f5f5;
+      color: #000000;
+    }
+    .message.user.interim {
+      border-style: dashed;
+      opacity: 0.7;
+    }
+    .message.agent {
+      align-self: flex-start;
+      background: #ffffff;
+      color: #000000;
+      font-weight: 500;
+      box-shadow: 4px 4px 0px #000000;
+    }
 
-        #status {
-            font-size: 0.9rem;
-            color: #666;
-            margin-bottom: 1.5rem;
-            padding: 4px 12px;
-            background: #eee;
-            border-radius: 20px;
-            display: inline-block;
-        }
-
-        #transcript {
-            height: 300px;
-            overflow-y: auto;
-            border: 1px solid #eee;
-            border-radius: 12px;
-            padding: 1rem;
-            text-align: left;
-            display: flex;
-            flex-direction: column;
-            gap: 10px;
-            margin-bottom: 1.5rem;
-            background: #fafafa;
-        }
-
-        .msg { padding: 8px 12px; border-radius: 8px; max-width: 85%; font-size: 0.95rem; line-height: 1.4; }
-        .user { align-self: flex-end; background: #4a90e2; color: white; }
-        .agent { align-self: flex-start; background: #e9e9eb; color: #333; }
-
-        button {
-            width: 100%;
-            padding: 14px;
-            border-radius: 8px;
-            border: none;
-            font-weight: 600;
-            cursor: pointer;
-            transition: all 0.2s;
-            font-size: 1rem;
-        }
-
-        #btn-connect { background: #4a90e2; color: white; }
-        #btn-connect:hover { background: #357abd; }
-        #btn-disconnect { background: #ff4d4d; color: white; margin-top: 10px; display: none; }
-
-        #audio-container { display: none; }
-    </style>
-    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.js"></script>
+    .tools-box {
+      width: 100%;
+      background: #ffffff;
+      border: 2px dashed #000000;
+      padding: 16px 20px;
+      margin-top: 16px;
+      max-height: 140px;
+      overflow-y: auto;
+      text-align: left;
+      font-size: 13px;
+      color: #000000;
+      line-height: 1.5;
+      box-sizing: border-box;
+      display: none;
+    }
+    .tools-box div { margin-bottom: 8px; border-bottom: 1px dotted #000000; padding-bottom: 6px; }
+    .tools-box div:last-child { margin-bottom: 0; border-bottom: none; padding-bottom: 0; }
+  </style>
 </head>
 <body>
 
-<div class="container">
-    <h1>Voice Assistant</h1>
-    <div id="status">Ready</div>
-    
-    <div id="transcript">
-        <div style="color: #999; font-style: italic; text-align: center;">Transcripts will appear here...</div>
+<div class="main-container">
+  <h2>AI Agent</h2>
+  
+  <div class="agent-wrapper">
+    <div class="agent-circle" id="agent-circle">
+      <div class="agent-inner" id="agent-inner"></div>
     </div>
-    
-    <button id="btn-connect">Start Conversation</button>
-    <button id="btn-disconnect">End Session</button>
+  </div>
+  
+  <div class="status" id="status">Ready to connect</div>
+  
+  <div class="controls">
+    <button class="btn-primary" id="btn-connect-mic" onclick="controller.connect()">Connect Mic</button>
+    <button class="btn-primary" id="btn-mute-mic" style="display:none" onclick="controller.toggleMute()">Mute</button>
+    <button class="btn-endcall" id="btn-disconnect-call" onclick="controller.disconnect()">End Call</button>
+  </div>
+
+  <div class="chat-container" id="chat-container">
+    <div style="text-align:center;color:#555555;font-size:13px;margin:auto;">Microphone inactive. Click Connect to speak with Agent.</div>
+  </div>
+  
+  <div class="tools-box" id="tools-box"></div>
 </div>
 
-<div id="audio-container"></div>
-
 <script>
-    const API_URL = 'http://localhost:8080';
-    let currentRoom = null;
-    let currentSessionId = null;
+class SessionController {
+  constructor() {
+    this.room = null;
+    this.state = 'DISCONNECTED';
+    this.interactionState = 'IDLE';
+    this.isMuted = false;
+    this.currentAgentBubble = null;
+    this.audioContext = null;
+    this.agentAudioElement = null;
 
-    const statusEl = document.getElementById('status');
-    const transcriptEl = document.getElementById('transcript');
-    const btnConnect = document.getElementById('btn-connect');
-    const btnDisconnect = document.getElementById('btn-disconnect');
-    const audioContainer = document.getElementById('audio-container');
+    // DOM Elements
+    this.btnConnect = document.getElementById('btn-connect-mic');
+    this.btnDisconnect = document.getElementById('btn-disconnect-call');
+    this.btnMute = document.getElementById('btn-mute-mic');
+    this.statusText = document.getElementById('status');
+    this.agentCircle = document.getElementById('agent-circle');
+    this.chatContainer = document.getElementById('chat-container');
+    this.toolsBox = document.getElementById('tools-box');
+    this.partialDiv = null;
 
-    function addTranscript(text, role) {
-        if (transcriptEl.querySelector('div[style*="italic"]')) {
-            transcriptEl.innerHTML = '';
-        }
-        const div = document.createElement('div');
-        div.className = `msg ${role}`;
-        div.innerText = (role === 'user' ? 'You: ' : 'Agent: ') + text;
-        transcriptEl.appendChild(div);
-        transcriptEl.scrollTop = transcriptEl.scrollHeight;
+    // Bindings
+    this.connect = this.connect.bind(this);
+    this.disconnect = this.disconnect.bind(this);
+    this.toggleMute = this.toggleMute.bind(this);
+  }
+
+  log(event, message = '') {
+    console.log(`[${event}]`, message);
+  }
+
+  setState(newState) {
+    this.state = newState;
+    this.log(`STATE_CHANGE`, newState);
+    this.updateUI();
+  }
+
+  setInteractionState(newState) {
+    this.interactionState = newState;
+    this.log(`INTERACTION_STATE`, newState);
+    this.updateUI();
+  }
+
+  updateUI() {
+    // Buttons
+    if (this.state === 'DISCONNECTED' || this.state === 'ERROR') {
+      this.btnConnect.style.display = 'inline-block';
+      this.btnConnect.disabled = false;
+      this.btnDisconnect.style.display = 'none';
+      this.btnMute.style.display = 'none';
+      this.agentCircle.className = 'agent-circle';
+      this.statusText.textContent = this.state === 'ERROR' ? 'Connection Error' : 'Ready to connect';
+      this.btnConnect.textContent = 'Connect Mic';
+    } else if (this.state === 'CONNECTING') {
+      this.btnConnect.disabled = true;
+      this.btnConnect.textContent = 'Connecting...';
+      this.statusText.textContent = 'Connecting to session gateway...';
+    } else if (this.state === 'CONNECTED') {
+      this.btnConnect.style.display = 'none';
+      this.btnDisconnect.style.display = 'inline-block';
+      this.btnMute.style.display = 'inline-block';
+      this.btnMute.textContent = this.isMuted ? 'Unmute' : 'Mute';
+      
+      // Agent visual
+      let circleClass = 'agent-circle connected';
+      if (this.interactionState === 'RESPONDING') circleClass += ' speaking';
+      else if (this.interactionState === 'THINKING' || this.interactionState === 'TOOL_EXECUTION') circleClass += ' thinking';
+      this.agentCircle.className = circleClass;
+
+      let statusMsg = 'Connected. ';
+      if (this.isMuted) statusMsg += '(Muted) ';
+      if (this.interactionState === 'LISTENING') statusMsg += 'Listening...';
+      else if (this.interactionState === 'THINKING') statusMsg += 'Thinking...';
+      else if (this.interactionState === 'TOOL_EXECUTION') statusMsg += 'Executing tool...';
+      else if (this.interactionState === 'RESPONDING') statusMsg += 'Agent speaking...';
+      else statusMsg += 'Idle.';
+      this.statusText.textContent = statusMsg;
     }
+  }
 
-    async function connect() {
+  async connect() {
+    this.setState('CONNECTING');
+    try {
+      this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
+      await this.audioContext.resume();
+      this.log('AUDIO_CONTEXT_RESUMED');
+
+      const res = await fetch('http://localhost:8080/session/join?t=' + Date.now(), {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ user_identity: 'user-' + Math.floor(Math.random()*1000) }),
+      });
+      const data = await res.json();
+
+      this.room = new LivekitClient.Room();
+      this.setupRoomListeners();
+
+      this.chatContainer.innerHTML = '<div style="text-align:center;color:#555555;font-size:13px;margin:auto;">Connected.</div>';
+      this.toolsBox.innerHTML = '';
+      this.toolsBox.style.display = 'none';
+      this.currentAgentBubble = null;
+
+      await this.room.connect(data.livekit_url, data.token);
+      await this.room.localParticipant.setMicrophoneEnabled(true, {
+        echoCancellation: true,
+        noiseSuppression: true,
+        autoGainControl: false
+      });
+      
+      this.setState('CONNECTED');
+      this.setInteractionState('IDLE');
+      this.log('SESSION_CONNECTED');
+    } catch (e) {
+      this.log('ERROR', e.message);
+      this.setState('ERROR');
+    }
+  }
+
+  setupRoomListeners() {
+    this.room.on(LivekitClient.RoomEvent.TrackSubscribed, async (track, publication, participant) => {
+      if (track.kind === "audio") {
+        this.agentAudioElement = track.attach();
+        this.agentAudioElement.autoplay = true;
+        this.agentAudioElement.playsInline = true;
+        this.agentAudioElement.setAttribute("x-webkit-airplay", "deny");
+        this.agentAudioElement.preload = "none";
+        document.body.appendChild(this.agentAudioElement);
         try {
-            statusEl.innerText = 'Connecting...';
-            btnConnect.disabled = true;
-
-            const res = await fetch(`${API_URL}/session/join`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ user_identity: 'user-' + Math.random().toString(36).substr(2, 5) })
-            });
-
-            const data = await res.json();
-            currentSessionId = data.session_id;
-
-            const room = new LivekitClient.Room();
-            currentRoom = room;
-
-            room.on(LivekitClient.RoomEvent.TrackSubscribed, (track) => {
-                if (track.kind === 'audio') {
-                    const el = track.attach();
-                    audioContainer.appendChild(el);
-                }
-            });
-
-            room.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
-                const data = JSON.parse(new TextDecoder().decode(payload));
-                if (data.type === 'transcription') {
-                    addTranscript(data.text, data.participant);
-                }
-            });
-
-            await room.connect(data.livekit_url, data.token);
-            await room.localParticipant.setMicrophoneEnabled(true);
-
-            statusEl.innerText = 'Connected';
-            btnConnect.style.display = 'none';
-            btnDisconnect.style.display = 'block';
-
+          await this.agentAudioElement.play();
         } catch (err) {
-            console.error(err);
-            statusEl.innerText = 'Error: ' + err.message;
-            btnConnect.disabled = false;
+          this.log('AUDIO_ERROR', err);
         }
-    }
+      }
+    });
 
-    async function disconnect() {
-        if (currentRoom) await currentRoom.disconnect();
-        if (currentSessionId) fetch(`${API_URL}/session/${currentSessionId}`, { method: 'DELETE' });
-        location.reload();
-    }
+    this.room.on(LivekitClient.RoomEvent.ActiveSpeakersChanged, (speakers) => {
+      const agentSpeaking = speakers.some(s => s !== this.room.localParticipant);
+      const userSpeaking = speakers.some(s => s === this.room.localParticipant);
+      
+      if (agentSpeaking) this.setInteractionState('RESPONDING');
+      else if (userSpeaking && this.interactionState !== 'TOOL_EXECUTION') this.setInteractionState('LISTENING');
+      else if (this.interactionState === 'RESPONDING' || this.interactionState === 'LISTENING') this.setInteractionState('IDLE');
+    });
 
-    btnConnect.addEventListener('click', connect);
-    btnDisconnect.addEventListener('click', disconnect);
+    this.room.on(LivekitClient.RoomEvent.DataReceived, (payload) => {
+      const msg = JSON.parse(new TextDecoder().decode(payload));
+      this.handleDataMessage(msg);
+    });
+
+    this.room.on(LivekitClient.RoomEvent.Disconnected, () => {
+      this.disconnect();
+    });
+  }
+
+  handleDataMessage(msg) {
+    if (msg.type === 'mode_info') {
+      this.log('MODE_INFO', msg.mode);
+    } else if (msg.type === 'transcription') {
+      if (msg.participant === 'agent') {
+        this.setInteractionState('RESPONDING');
+        // Aggregation logic
+        if (!this.currentAgentBubble) {
+          this.currentAgentBubble = document.createElement("div");
+          this.currentAgentBubble.className = "message agent";
+          this.currentAgentBubble.innerHTML = `<div class="sender">Agent</div><div class="content"></div>`;
+          this.chatContainer.appendChild(this.currentAgentBubble);
+        }
+        const contentDiv = this.currentAgentBubble.querySelector('.content');
+        // Append text with space if it already has text
+        contentDiv.textContent = contentDiv.textContent ? contentDiv.textContent + ' ' + msg.text : msg.text;
+        this.log('ASSISTANT_RESPONSE_CHUNK', msg.text);
+      } else {
+        // User transcription
+        this.currentAgentBubble = null; // Break agent aggregation on user speech
+        if (!msg.is_final) {
+          if (!this.partialDiv) {
+            this.partialDiv = document.createElement("div");
+            this.partialDiv.className = "message user interim";
+            this.partialDiv.innerHTML = `<div class="sender">You (listening...)</div><div class="content">${msg.text}</div>`;
+            this.chatContainer.appendChild(this.partialDiv);
+          } else {
+            this.partialDiv.querySelector(".content").textContent = msg.text;
+          }
+        } else {
+          if (this.partialDiv) {
+            this.partialDiv.remove();
+            this.partialDiv = null;
+          }
+          const finalDiv = document.createElement("div");
+          finalDiv.className = "message user";
+          finalDiv.innerHTML = `<div class="sender">You</div><div class="content">${msg.text}</div>`;
+          this.chatContainer.appendChild(finalDiv);
+          this.setInteractionState('THINKING');
+        }
+      }
+      this.chatContainer.scrollTop = this.chatContainer.scrollHeight;
+    } else if (msg.type === 'tool_call') {
+      this.log('TOOL_CALL_STARTED', msg.tool);
+      this.setInteractionState('TOOL_EXECUTION');
+      this.currentAgentBubble = null; // Tool execution breaks chat aggregation
+      this.toolsBox.style.display = 'block';
+      this.toolsBox.innerHTML += `<div>[Calling Tool] <b>${msg.tool}</b>: ${JSON.stringify(msg.args)}</div>`;
+      this.toolsBox.scrollTop = this.toolsBox.scrollHeight;
+    } else if (msg.type === 'tool_result') {
+      this.log('TOOL_CALL_COMPLETED', msg.tool);
+      this.setInteractionState('THINKING');
+      this.toolsBox.style.display = 'block';
+      this.toolsBox.innerHTML += `<div>[Tool Result] <b>${msg.tool}</b>: ${JSON.stringify(msg.result)}</div>`;
+      this.toolsBox.scrollTop = this.toolsBox.scrollHeight;
+    } else if (msg.type === 'interruption') {
+      this.log('USER_INTERRUPTED_AGENT');
+      if (this.partialDiv) {
+        this.partialDiv.remove();
+        this.partialDiv = null;
+      }
+      this.currentAgentBubble = null;
+      this.setInteractionState('IDLE');
+    }
+  }
+
+  async toggleMute() {
+    if (!this.room || !this.room.localParticipant) return;
+    
+    // Toggle track enabled state to avoid destroying track
+    const tracks = Array.from(this.room.localParticipant.audioTrackPublications.values());
+    for (const track of tracks) {
+      if (track.track) {
+        if (this.isMuted) {
+          await track.track.unmute();
+        } else {
+          await track.track.mute();
+        }
+      }
+    }
+    this.isMuted = !this.isMuted;
+    this.log(this.isMuted ? 'MIC_MUTED' : 'MIC_UNMUTED');
+    this.updateUI();
+  }
+
+  async disconnect() {
+    this.log('SESSION_DISCONNECTED');
+    if (this.room) {
+      await this.room.disconnect();
+      this.room = null;
+    }
+    if (this.agentAudioElement) {
+      this.agentAudioElement.remove();
+      this.agentAudioElement = null;
+    }
+    if (this.audioContext) {
+      await this.audioContext.close();
+      this.audioContext = null;
+    }
+    
+    this.currentAgentBubble = null;
+    this.partialDiv = null;
+    this.isMuted = false;
+    this.setState('DISCONNECTED');
+    this.setInteractionState('IDLE');
+  }
+}
+
+const controller = new SessionController();
 </script>
+
 </body>
 </html>

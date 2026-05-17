@@ -79,18 +79,18 @@ graph TD
 
 | Layer | Component | Status | Details |
 | :--- | :--- | :--- | :--- |
-| **1** | **User Voice** | ✅ | Browser Microphone input |
-| **2** | **Transport** | ✅ | WebRTC (LiveKit) |
-| **3** | **LiveKit / Telephony** | 🟢 | SFU, Room/Participant Mgmt active. SIP/PSTN/Carrier routing is **Roadmap**. |
-| **4** | **Voice Runtime** | ✅ | Pipecat 1.1.0 Orchestrator (Session, Lifecycle, Barge-in) |
-| **5** | **Audio Pipeline** | ✅ | Silero VAD, Real-time chunking, Resampling |
-| **6** | **STT** | ✅ | Deepgram Streaming (Multilingual/Hinglish) |
-| **7** | **LLM / Thinking** | 🟢 | Ollama (Local) / OpenAI. RAG & Guardrails are **Roadmap**. |
-| **8** | **Tool Calling** | ❌ | Supported by Pipecat; implementation is **Roadmap**. |
-| **9** | **Temporal Workflows**| ❌ | Persistence & Failure Recovery is **Roadmap**. |
-| **10**| **TTS** | ✅ | Cartesia Streaming (Low-latency synthesis) |
-| **11**| **Streaming Output** | ✅ | Jitter compensation & Adaptive playback (LiveKit) |
-| **12**| **User Playback** | ✅ | Browser Audio Playback |
+| **1** | **User Voice** | ✓ | Browser Microphone input |
+| **2** | **Transport** | ✓ | WebRTC (LiveKit) |
+| **3** | **LiveKit / Telephony** | ✓ | SFU, Room/Participant Mgmt active. SIP/PSTN/Carrier routing is **Roadmap**. |
+| **4** | **Voice Runtime** | ✓ | Pipecat 1.1.0 Orchestrator (Session, Lifecycle, Barge-in) |
+| **5** | **Audio Pipeline** | ✓ | Silero VAD, Real-time chunking, Resampling |
+| **6** | **STT** | ✓ | Deepgram Streaming (Multilingual/Hinglish) |
+| **7** | **LLM / Thinking** | ✓ | Ollama (Local) / OpenAI. RAG & Guardrails are **Roadmap**. |
+| **8** | **Tool Calling** | ✓ | Fully implemented with strict two-step transactional flows (Check Availability -> Book) and state carry-over to prevent LLM hallucinations. |
+| **9** | **Temporal Workflows**| ✗ | Persistence & Failure Recovery is **Roadmap**. |
+| **10**| **TTS** | ✓ | Cartesia Streaming (Low-latency synthesis) |
+| **11**| **Streaming Output** | ✓ | Jitter compensation & Adaptive playback (LiveKit) |
+| **12**| **User Playback** | ✓ | Browser Audio Playback |
 
 ---
 
@@ -412,15 +412,13 @@ Three files, each following the same pattern: a factory function that reads the 
 
 A self-contained single-page app. No framework, no build step. Uses the LiveKit JS SDK loaded from CDN.
 
-The flow on "Connect":
+The frontend is orchestrated by a rigorous `SessionController` class that guarantees stable transitions across 7 states: `DISCONNECTED`, `CONNECTING`, `CONNECTED`, `LISTENING`, `THINKING`, `TOOL_EXECUTION`, and `RESPONDING`.
 
-1. Calls `POST /session/join` on the agent API to get a token + room name
-2. Creates a `Room` instance with AEC, noise suppression, and auto-gain enabled
-3. Connects to LiveKit via the returned token
-4. Enables the microphone (triggers browser permission prompt)
-5. Listens for `TrackSubscribed` events — when the agent publishes audio, attaches it to a hidden `<audio>` element for playback
-
-The orb animation states correspond to LiveKit room events: `speaking` when agent audio is subscribed, `listening` otherwise.
+Key features:
+1. **Mute/Unmute**: Cleanly toggles `track.mute()` without dropping the WebRTC room.
+2. **Strict Disconnect Cleanup**: Clicking "End Call" destroys the audio context, removes rogue audio elements, and permits clean reconnection without browser refreshing.
+3. **Transcript Aggregation**: Prevents UI fragmentation by caching the active chat bubble and appending consecutive agent words into a single, cohesive paragraph.
+4. **Tool Sync Boundaries**: UI suspends chat flow into a dedicated `TOOL_EXECUTION` display when the agent calls tools, strictly rendering actions in timeline order.
 
 ---
 
@@ -759,52 +757,25 @@ return OpenAILLMService(
 
 ## 12. Extending the POC
 
-### Add a tool call (e.g., checking calendar availability)
+### Tool Execution & State Carry-Over
 
-In `pipeline/providers/llm.py`, define a tool schema and register it with Pipecat's LLM function calling:
+The POC includes a full two-step transactional tool execution flow (`check_availability` -> `book_appointment`).
 
-```python
-from pipecat.services.openai import OpenAILLMService
-from pipecat.processors.aggregators.openai_llm_context import OpenAILLMContextFrame
+**1. Tool Registry (`pipeline/providers/registry.py`)**
+Define your tool schemas using OpenAI's Function Calling format. Ensure you provide strict `description` fields telling the LLM *exactly* when to call the tool and what to say.
 
-# Define your tool
-tools = [
-    {
-        "type": "function",
-        "function": {
-            "name": "check_availability",
-            "description": "Check if a time slot is available for booking",
-            "parameters": {
-                "type": "object",
-                "properties": {
-                    "date": {"type": "string", "description": "Date in YYYY-MM-DD format"},
-                    "time": {"type": "string", "description": "Time in HH:MM format"}
-                },
-                "required": ["date", "time"]
-            }
-        }
-    }
-]
+**2. Tool Handlers (`tools/handlers.py`)**
+Map the schema names to async python functions that execute your business logic. 
 
-# Pass tools to LLM service
-return OpenAILLMService(
-    api_key=settings.openai_api_key,
-    model=settings.llm_model,
-    tools=tools,
-)
-```
+**3. State Carry-Over (`runtime/state.py` & `session.py`)**
+When building a two-step flow (like checking a slot and then booking it), the LLM is prone to hallucinating or forgetting the exact timestamp between turns. 
+- During Step 1 (`check_availability`), cache the arguments to `self.state.pending_appointment`.
+- During Step 2 (`book_appointment`), intercept the LLM's arguments and explicitly overwrite them with the cached state before passing them to the handler.
 
-Then register the function handler in `pipeline/agent.py`:
-
-```python
-# In run_agent_session(), after creating the llm service:
-@llm.event_handler("on_function_call")
-async def handle_function_call(llm, function_name, arguments, result_callback):
-    if function_name == "check_availability":
-        # Your business logic here
-        result = {"available": True, "slots": ["3:00 PM", "4:00 PM"]}
-        await result_callback(result)
-```
+**4. Halting Hallucinations (`session.py`)**
+LLMs will naturally try to "guess" the result of a tool before the tool actually executes. The `SYSTEM_PROMPT` enforces:
+`"When you need to use a tool, ONLY output a quick confirmation like 'Let me check that' and IMMEDIATELY call the tool."`
+This forces the LLM to yield the `tool_call` token, halting conversational speech until the tool returns.
 
 ### Add Redis session state persistence
 
