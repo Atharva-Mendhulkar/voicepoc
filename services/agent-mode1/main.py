@@ -65,13 +65,27 @@ async def join_session(req: JoinRequest):
     user_token = (
         livekit_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(req.user_identity)
-        .with_grants(livekit_api.VideoGrants(room_join=True, room=room_name))
+        .with_grants(livekit_api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True,
+        ))
         .to_jwt()
     )
     agent_token = (
         livekit_api.AccessToken(settings.livekit_api_key, settings.livekit_api_secret)
         .with_identity(f"agent-{session_id}")
-        .with_grants(livekit_api.VideoGrants(room_join=True, room=room_name))
+        .with_grants(livekit_api.VideoGrants(
+            room_join=True,
+            room=room_name,
+            can_publish=True,
+            can_subscribe=True,
+            can_publish_data=True,
+            can_update_own_metadata=True,
+            agent=True,
+        ))
         .to_jwt()
     )
 

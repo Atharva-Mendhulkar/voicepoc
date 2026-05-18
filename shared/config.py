@@ -17,7 +17,7 @@ class Settings(BaseSettings):
     agent_language: str = "multi"
 
     cartesia_api_key: str = ""
-    cartesia_voice_id: str = ""
+    cartesia_voice_id: str = "248be419-c632-4f23-adf1-5324ed7dbf1d"
 
     openai_api_key: str = ""
     anthropic_api_key: str = ""

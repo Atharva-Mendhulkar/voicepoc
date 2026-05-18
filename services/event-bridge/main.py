@@ -55,7 +55,7 @@ async def websocket_endpoint(websocket: WebSocket, session_id: str):
 
 async def consume_redis_streams():
     logger.info("Starting Redis Streams consumer for event-bridge...")
-    last_id = "0" # Or "$" to start from now
+    active_streams = {}
     
     # We poll all vrep:events:* streams
     while True:
@@ -66,21 +66,26 @@ async def consume_redis_streams():
                 await asyncio.sleep(1)
                 continue
                 
-            streams = {k: "$" for k in keys} # To receive only new messages, use "$" initially
+            for k in keys:
+                if k not in active_streams:
+                    active_streams[k] = "0" # Start reading from beginning for new streams
             
-            # Since we can't cleanly dynamic poll with $, we will just use a consumer loop
-            # A more robust implementation would use XREADGROUP, but XREAD is fine for this POC
+            # Remove expired streams
+            for k in list(active_streams.keys()):
+                if k not in keys:
+                    del active_streams[k]
+                    
             while True:
                 # Need to update keys list occasionally
                 if int(time.time()) % 10 == 0:
                     break
                     
-                messages = await redis_client.xread(streams, count=100, block=1000)
+                messages = await redis_client.xread(active_streams, count=100, block=1000)
                 if messages:
                     for stream_name, stream_msgs in messages:
                         session_id = stream_name.split(":")[2]
                         for msg_id, msg_data in stream_msgs:
-                            streams[stream_name] = msg_id
+                            active_streams[stream_name] = msg_id
                             
                             payload_str = msg_data.get("payload", "{}")
                             try:

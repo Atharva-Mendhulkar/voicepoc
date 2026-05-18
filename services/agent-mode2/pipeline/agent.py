@@ -62,7 +62,7 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
     stt = DeepgramSTTService(api_key=settings.deepgram_api_key)
     tts = CartesiaTTSService(
         api_key=settings.cartesia_api_key,
-        settings=CartesiaTTSService.Settings(voice="sonic-english")
+        settings=CartesiaTTSService.Settings(model="sonic-english", voice=settings.cartesia_voice_id or "248be419-c632-4f23-adf1-5324ed7dbf1d")
     )
     llm = OpenAILLMService(
         api_key=settings.openai_api_key,
@@ -149,18 +149,20 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
     context = LLMContext(messages=messages, tools=ts)
     user_agg, assistant_agg = LLMContextAggregatorPair(context)
 
-    event_processor = EventEmitterProcessor(transport, telemetry)
+    user_event_processor = EventEmitterProcessor(transport, telemetry)
+    assistant_event_processor = EventEmitterProcessor(transport, telemetry)
 
     pipeline = Pipeline(
         [
             transport.input(),
             stt,
+            user_event_processor,
             user_agg,
             llm,
             tts,
             transport.output(),
+            assistant_event_processor,
             assistant_agg,
-            event_processor,
         ]
     )
 

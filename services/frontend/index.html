@@ -327,6 +327,10 @@ class SessionController {
   }
 
   async connect() {
+    if (this.state === 'CONNECTING' || this.state === 'CONNECTED') {
+      this.log('CONNECT_BLOCKED', 'Session already active or connecting');
+      return;
+    }
     this.setState('CONNECTING');
     try {
       this.audioContext = new (window.AudioContext || window.webkitAudioContext)();
@@ -335,6 +339,7 @@ class SessionController {
 
       if (this.debugWs) {
         this.debugWs.close();
+        this.debugWs = null;
       }
 
       const identity = "user-" + Math.floor(Math.random() * 10000);
@@ -533,6 +538,10 @@ class SessionController {
 
   async disconnect() {
     this.log('SESSION_DISCONNECTED');
+    if (this.debugWs) {
+      this.debugWs.close();
+      this.debugWs = null;
+    }
     if (this.room) {
       await this.room.disconnect();
       this.room = null;

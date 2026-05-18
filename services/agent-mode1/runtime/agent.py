@@ -6,6 +6,7 @@ from datetime import date
 
 from livekit import rtc
 from livekit.agents import llm, voice
+from livekit.agents.utils import http_context
 from livekit.agents.voice import Agent as VoicePipelineAgent
 from livekit.plugins import openai, deepgram, cartesia, silero
 
@@ -107,67 +108,83 @@ async def run_livekit_session(session_id: str, room_name: str, agent_token: str)
     room = rtc.Room()
     appt_tools = AppointmentTools(room, telemetry)
 
-    agent = VoicePipelineAgent(
-        vad=silero.VAD.load(min_silence_duration=0.1),
-        stt=deepgram.STT(api_key=settings.deepgram_api_key),
-        llm=openai.LLM(api_key=settings.openai_api_key, model="gpt-4o-mini"),
-        tts=cartesia.TTS(api_key=settings.cartesia_api_key, voice="sonic-english"),
-        tools=[appt_tools],
-        instructions=SYSTEM_PROMPT.format(today=date.today().isoformat()),
-        allow_interruptions=True,
-    )
-
     @room.on("disconnected")
     def on_disconnected():
         logger.info(f"[MODE 1] Room {room_name} disconnected")
         asyncio.create_task(telemetry.emit("session.lifecycle", {"status": "closed"}))
 
     try:
-        await room.connect(settings.livekit_url, agent_token)
-        logger.info(f"[MODE 1] Connected to room {room_name}")
-        session = voice.AgentSession()
-        await session.start(agent, room=room)
+        async with http_context.open():
+            agent = VoicePipelineAgent(
+                vad=silero.VAD.load(min_silence_duration=0.1),
+                stt=deepgram.STT(api_key=settings.deepgram_api_key),
+                llm=openai.LLM(api_key=settings.openai_api_key, model="gpt-4o-mini"),
+                tts=cartesia.TTS(api_key=settings.cartesia_api_key, voice=settings.cartesia_voice_id or "248be419-c632-4f23-adf1-5324ed7dbf1d"),
+                tools=[appt_tools],
+                instructions=SYSTEM_PROMPT.format(today=date.today().isoformat()),
+                allow_interruptions=True,
+            )
 
-        @session.on("user_input_transcribed")
-        def on_user_input_transcribed(event):
-            if getattr(event, "is_final", False):
-                text = getattr(event, "transcript", "")
-                asyncio.create_task(telemetry.emit("user.speech.commit", {"text": text}))
-                asyncio.create_task(telemetry.emit("user.transcript.final", {"text": text}))
-                asyncio.create_task(room.local_participant.publish_data(
-                    json.dumps({"type": "transcription", "text": text, "is_final": True}).encode()
-                ))
+            await room.connect(settings.livekit_url, agent_token)
+            logger.info(f"[MODE 1] Connected to room {room_name}")
+            session = voice.AgentSession()
+            await session.start(agent, room=room)
 
-        @session.on("agent_state_changed")
-        def on_agent_state_changed(event):
-            state = getattr(event, "new_state", "")
-            if str(state).lower() == "speaking":
-                asyncio.create_task(telemetry.emit("tts.first_audio", {}))
+            @session.on("user_input_transcribed")
+            def on_user_input_transcribed(event):
+                if getattr(event, "is_final", False):
+                    text = getattr(event, "transcript", "")
+                    asyncio.create_task(telemetry.emit("user.speech.commit", {"text": text}))
+                    asyncio.create_task(telemetry.emit("user.transcript.final", {"text": text}))
+                    asyncio.create_task(room.local_participant.publish_data(
+                        json.dumps({"type": "transcription", "text": text, "is_final": True}).encode()
+                    ))
 
-        await room.local_participant.publish_data(
-            json.dumps({"type": "mode_info", "mode": "livekit", "phase": 2, "status": "conversational"}).encode()
-        )
-        greeting = "Hello! I'm Agent. You're connected in LiveKit-Only mode. How can I help?"
-        asyncio.create_task(telemetry.emit("tts.request.start", {"text": greeting}))
-        session.say(greeting)
-        await room.local_participant.publish_data(
-            json.dumps({"type": "transcription", "participant": "agent", "text": greeting}).encode()
-        )
+            @session.on("agent_state_changed")
+            def on_agent_state_changed(event):
+                state = getattr(event, "new_state", "")
+                if str(state).lower() == "speaking":
+                    asyncio.create_task(telemetry.emit("tts.first_audio", {}))
+                    asyncio.create_task(room.local_participant.publish_data(
+                        json.dumps({"type": "transcription", "participant": "agent", "text": ""}).encode()
+                    ))
 
-        participant_joined = False
-        wait_time = 0
-        while True:
-            await asyncio.sleep(1)
-            wait_time += 1
-            if len(room.remote_participants) > 0:
-                participant_joined = True
+            @session.on("conversation_item_added")
+            def on_conversation_item_added(event):
+                item = getattr(event, "item", None)
+                if item and getattr(item, "role", "") == "assistant":
+                    text = getattr(item, "text_content", None) or ""
+                    if text:
+                        logger.info(f"[MODE 1 ASSISTANT FINAL] {text}")
+                        asyncio.create_task(telemetry.emit("llm.complete", {}))
+                        asyncio.create_task(room.local_participant.publish_data(
+                            json.dumps({"type": "transcription", "participant": "agent", "text": text}).encode()
+                        ))
 
-            if participant_joined and len(room.remote_participants) == 0:
-                logger.info("[MODE 1] Room empty, draining session")
-                break
-            elif not participant_joined and wait_time > 30:
-                logger.info("[MODE 1] Timeout waiting for participant")
-                break
+            await room.local_participant.publish_data(
+                json.dumps({"type": "mode_info", "mode": "livekit", "phase": 2, "status": "conversational"}).encode()
+            )
+            greeting = "Hello! I'm Agent. You're connected in LiveKit-Only mode. How can I help?"
+            asyncio.create_task(telemetry.emit("tts.request.start", {"text": greeting}))
+            session.say(greeting)
+            await room.local_participant.publish_data(
+                json.dumps({"type": "transcription", "participant": "agent", "text": greeting}).encode()
+            )
+
+            participant_joined = False
+            wait_time = 0
+            while True:
+                await asyncio.sleep(1)
+                wait_time += 1
+                if len(room.remote_participants) > 0:
+                    participant_joined = True
+
+                if participant_joined and len(room.remote_participants) == 0:
+                    logger.info("[MODE 1] Room empty, draining session")
+                    break
+                elif not participant_joined and wait_time > 30:
+                    logger.info("[MODE 1] Timeout waiting for participant")
+                    break
 
     except asyncio.CancelledError:
         logger.info("[MODE 1] Session cancelled")
