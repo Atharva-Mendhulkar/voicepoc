@@ -1,8 +1,8 @@
-# VOICE POC 
+# VOICE POC (Voice Runtime Evaluation Platform - VREP)
 
-**POC Scope:** Browser WebRTC voice agent, India language profile  
-**Stack:** LiveKit · Pipecat 1.1.0 · Deepgram Nova-3 · Cartesia Sonic · OpenAI (gpt-4o-mini) · Redis  
-**Infra:** Docker Compose (local dev)
+**POC Scope:** Multi-Mode Browser WebRTC voice agent, India language profile  
+**Stack:** LiveKit (`livekit-agents` v1.1.8) · Pipecat 1.2.0 · Deepgram Nova-3 · Cartesia Sonic · OpenAI (gpt-4o-mini) · Redis · Nginx  
+**Infra:** Docker Compose (8-container microservice topology for local & cloud dev tunnels)
 
 ---
 
@@ -28,15 +28,19 @@
 
 ## 1. What You're Building
 
-A **single-turn real-time voice agent** running entirely on your laptop inside Docker. A user opens a browser, clicks Connect, speaks (English or Hinglish), and receives a spoken AI response within ~300ms of finishing their sentence.
+A **production-grade Voice Runtime Evaluation Platform (VREP)** running entirely in Docker microservices. It features three strictly isolated runtime implementations that allow you to test, benchmark, and compare cognitive voice architectures side-by-side:
+- **Mode 1 (LiveKit-Only)**: Pure implementation built on `livekit-agents` `VoicePipelineAgent` and explicit `AgentSession.start()` lifecycles.
+- **Mode 2 (Pipecat-Only)**: Pure implementation built on `pipecat-ai` 1.2.0 `Pipeline`, `LiveKitTransport`, and `SileroVADAnalyzer`.
+- **Mode 3 (Hybrid)**: Custom async loop orchestrator managing bidirectional cognitive buffering and interruptible media pipelines.
+
+A user connects to a single unified port (3000), selects their desired runtime mode, speaks over WebRTC, and receives spoken AI responses within ~300ms, while real-time nanosecond telemetry streams directly into an interactive Event Timeline UI.
 
 ### What this POC proves
 
-- WebRTC transport over LiveKit works locally with zero cloud dependency
-- Pipecat's pipeline architecture cleanly separates transport, STT, LLM, and TTS
-- Every intelligence provider (STT / LLM / TTS) is swappable via a single env var with no code changes
-- Silero VAD handles barge-in interruptions correctly without energy-threshold hacks
-- The session isolation model (one asyncio.Task per call) is crash-safe
+- **Architectural Hard Isolation**: Each mode owns its independent cognitive orchestration and concurrency model without shared normalizing layers.
+- **Unified Single-Port Reverse Proxy**: Nginx seamlessly proxies WebRTC signaling (`/livekit/`), gateway APIs (`/session/join`), and WebSocket telemetry (`/debug/ws`) through port 3000, ensuring complete compatibility with cloud IDE tunneling.
+- **Standardized Telemetry**: All three modes emit identical Redis stream events (`vrep:events:<session_id>:<mode>`) intercepted by an Event Bridge microservice for real-time UI rendering.
+- **Robust Two-Step Tool Execution**: Transactional appointment booking (`check_availability` -> `book_appointment`) executes flawlessly with full state carry-over across all three runtime modes.
 
 ### What this POC does NOT include
 
@@ -50,77 +54,85 @@ A **single-turn real-time voice agent** running entirely on your laptop inside D
 
 ## 15. System Architecture
 
-### Architectural Flow
+### Architectural Flow & Multi-Mode Isolation
 ```mermaid
 graph TD
-    User([User Voice]) --> Transport[Transport Layer: WebRTC]
-    Transport --> LiveKit[LiveKit SFU / Room Mgmt]
-    LiveKit --> Runtime[Voice Runtime: Pipecat Orchestrator]
+    Client([Browser SPA UI]) -->|Port 3000| Proxy[Nginx Unified Reverse Proxy]
     
-    subgraph "Audio Processing Pipeline"
-        Runtime --> VAD[Silero VAD / Resampling]
-        VAD --> STT[Deepgram STT]
+    Proxy -->|/session/join| Router[Session Router: Gateway API]
+    Proxy -->|/debug/ws| Bridge[Event Bridge: WebSocket Stream]
+    Proxy -->|/livekit/| LiveKit[LiveKit SFU / WebRTC Transport]
+    
+    subgraph "Strictly Isolated Voice Runtimes"
+        Router -->|mode=livekit| M1[Mode 1: Pure LiveKit SDK]
+        Router -->|mode=pipecat| M2[Mode 2: Pure Pipecat 1.2.0]
+        Router -->|mode=hybrid| M3[Mode 3: Custom Hybrid Orchestrator]
     end
     
-    STT --> LLM[LLM: OpenAI / Ollama]
-    LLM --> TTS[TTS: Cartesia]
+    LiveKit <-->|WebRTC Media & Data| M1
+    LiveKit <-->|WebRTC Media & Data| M2
+    LiveKit <-->|WebRTC Media & Data| M3
     
-    TTS --> TransportOut[LiveKit Output Transport]
-    TransportOut --> User
+    M1 -->|vrep:events| Redis[(Redis Pub/Sub & State Bus)]
+    M2 -->|vrep:events| Redis
+    M3 -->|vrep:events| Redis
     
-    subgraph "Future Integration Layers"
-        SIP[SIP Trunks / PSTN]
-        Temporal[Temporal Workflows]
-        Tools[Tool Calling / CRM]
+    Redis -->|Consume Telemetry| Bridge
+    
+    subgraph "Intelligence Providers & Tools"
+        STT[Deepgram STT]
+        LLM[OpenAI LLM]
+        TTS[Cartesia TTS]
+        Tools[Appointment Booking CRM]
     end
+    
+    M1 & M2 & M3 --> STT & LLM & TTS & Tools
 ```
 
 ### 12-Layer Implementation Status
 
 | Layer | Component | Status | Details |
 | :--- | :--- | :--- | :--- |
-| **1** | **User Voice** | ✓ | Browser Microphone input |
-| **2** | **Transport** | ✓ | WebRTC (LiveKit) |
-| **3** | **LiveKit / Telephony** | ✓ | SFU, Room/Participant Mgmt active. SIP/PSTN/Carrier routing is **Roadmap**. |
-| **4** | **Voice Runtime** | ✓ | Pipecat 1.1.0 Orchestrator (Session, Lifecycle, Barge-in) |
-| **5** | **Audio Pipeline** | ✓ | Silero VAD, Real-time chunking, Resampling |
-| **6** | **STT** | ✓ | Deepgram Streaming (Multilingual/Hinglish) |
-| **7** | **LLM / Thinking** | ✓ | Ollama (Local) / OpenAI. RAG & Guardrails are **Roadmap**. |
-| **8** | **Tool Calling** | ✓ | Fully implemented with strict two-step transactional flows (Check Availability -> Book) and state carry-over to prevent LLM hallucinations. |
-| **9** | **Temporal Workflows**| ✗ | Persistence & Failure Recovery is **Roadmap**. |
-| **10**| **TTS** | ✓ | Cartesia Streaming (Low-latency synthesis) |
-| **11**| **Streaming Output** | ✓ | Jitter compensation & Adaptive playback (LiveKit) |
-| **12**| **User Playback** | ✓ | Browser Audio Playback |
+| **1** | **User Voice** | ✓ | Browser Microphone input streaming Opus over WebRTC |
+| **2** | **Transport Proxy**| ✓ | Unified Nginx single-port reverse proxy (Port 3000) for seamless cloud IDE tunneling |
+| **3** | **LiveKit SFU** | ✓ | SFU, room, and participant signaling active with STUN external IP resolution |
+| **4** | **Session Gateway**| ✓ | Session Router API mapping user requests to isolated container modes |
+| **5** | **Voice Runtimes** | ✓ | 3 Strictly Isolated Modes (Mode 1: LiveKit SDK, Mode 2: Pipecat 1.2.0, Mode 3: Hybrid) |
+| **6** | **Audio Pipeline** | ✓ | Silero VAD barge-in interruption detection and resampling |
+| **7** | **STT** | ✓ | Deepgram Nova-3 Streaming (Multilingual / Hinglish) |
+| **8** | **LLM / Cognition**| ✓ | OpenAI GPT-4o-mini with low-latency prompt tuning |
+| **9** | **Tool Calling** | ✓ | Fully implemented two-step transactional booking (`check` -> `book`) with state carry-over |
+| **10**| **Observability** | ✓ | Standardized Redis stream telemetry broadcasted over WebSockets to Event Timeline UI |
+| **11**| **TTS** | ✓ | Cartesia Streaming (Low-latency 24kHz audio synthesis) |
+| **12**| **User Playback** | ✓ | Synchronized browser audio context with strict disconnect cleanup |
 
 ---
 
 ## 2. Repository Structure
 
 ```text
-agentOS-poc/
+voicepoc/
 │
-├── docker-compose.yml          # Orchestrates all 4 services
+├── docker-compose.yml          # Orchestrates all 8 microservices
 ├── .env.example                # All env vars with documentation
-├── BUILD.md                    # This document
+├── README.md                   # This document
 │
 ├── infra/
-│   └── livekit.yaml            # LiveKit server config (local dev)
+│   ├── livekit.yaml            # LiveKit server config with STUN external IP resolution
+│   └── nginx.conf              # Unified Reverse Proxy config (Port 3000)
+│
+├── shared/
+│   ├── config.py               # Shared Pydantic settings across all containers
+│   ├── telemetry.py            # Standardized Redis stream telemetry emitter
+│   └── tools/                  # Transactional tool registry & handlers
 │
 └── services/
-    ├── agent/                  # Python FastAPI + Pipecat service
-    │   ├── Dockerfile
-    │   ├── requirements.txt
-    │   ├── config.py           # Pydantic settings; all config from env
-    │   ├── main.py             # FastAPI app + session lifecycle
-    │   └── pipeline/
-    │       ├── agent.py        # Pipecat pipeline + Latency Tuning (0.3s VAD)
-    │       └── providers/
-    │           ├── stt.py      # STT abstraction (Deepgram / Google Chirp)
-    │           ├── tts.py      # TTS abstraction (Cartesia / ElevenLabs)
-    │           └── llm.py      # LLM abstraction + system prompt
-    │
-    └── frontend/
-        └── index.html          # Browser voice client (LiveKit JS SDK)
+    ├── session-router/         # Gateway API routing sessions to Mode 1/2/3
+    ├── event-bridge/           # Telemetry interceptor & WebSocket timeline broadcaster
+    ├── agent-mode1/            # Mode 1: Pure LiveKit SDK (`VoicePipelineAgent`)
+    ├── agent-mode2/            # Mode 2: Pure Pipecat 1.2.0 (`Pipeline`)
+    ├── agent-mode3/            # Mode 3: Custom async loop hybrid orchestrator
+    └── frontend/               # Nginx serving SPA UI & proxied endpoints
 ```
 
 ---
@@ -148,14 +160,18 @@ docker compose version  # Should print Docker Compose version v2.x
 
 These ports must be free on your machine. Check with `lsof -i :<port>` on Mac/Linux:
 
-|Port|Service|Protocol|
-|---|---|---|
-|7880|LiveKit HTTP/WS|TCP|
-|7881|LiveKit RTC|TCP|
-|7882|LiveKit RTC|UDP|
-|6379|Redis|TCP|
-|8080|Agent FastAPI|TCP|
-|3000|Frontend Nginx|TCP|
+|Port|Service|Protocol|Description|
+|---|---|---|---|
+|3000|Frontend / Nginx Proxy|TCP|Unified entry point (`/`, `/session/join`, `/debug/ws`, `/livekit/`)|
+|8000|Session Router|TCP|Session initiation gateway API|
+|8081|Agent Mode 1|TCP|LiveKit SDK Voice Runtime (`VoicePipelineAgent`)|
+|8082|Agent Mode 2|TCP|Pipecat 1.2.0 Voice Runtime (`Pipeline`)|
+|8083|Agent Mode 3|TCP|Hybrid Voice Runtime|
+|8090|Event Bridge|TCP|Debug timeline WebSocket broadcaster|
+|7880|LiveKit HTTP/WS|TCP|WebRTC signaling & SFU API|
+|7881|LiveKit RTC|TCP|TCP fallback media transport|
+|7882|LiveKit RTC|UDP|Primary UDP media transport|
+|6379|Redis|TCP|Session store & real-time telemetry stream|
 
 ---
 
@@ -263,30 +279,34 @@ Watch for any build errors. The most common: pip install failures due to system 
 docker compose up
 ```
 
-You should see logs from four services starting. Wait until you see:
+You should see logs from all eight microservices starting up. Wait until you see:
 
 ```text
-livekit     | INFO  starting server ...
-agent       | INFO  Application startup complete.
-redis       | Ready to accept connections
-frontend    | nginx: configuration file ... test is successful
+livekit          | INFO  starting server ...
+session-router   | INFO  Uvicorn running on http://0.0.0.0:8000
+agent-mode1      | INFO  AgentOS starting — mode=LIVEKIT (Mode 1)
+agent-mode2      | INFO  AgentOS starting — mode=PIPECAT (Mode 2)
+agent-mode3      | INFO  AgentOS starting — mode=HYBRID (Mode 3)
+event-bridge     | INFO  Event bridge running on ws://0.0.0.0:8090
+redis            | Ready to accept connections
+frontend         | nginx: configuration file ... test is successful
 ```
 
 To run in background (detached):
 
 ```bash
 docker compose up -d
-docker compose logs -f agent  # Follow just the agent logs
+docker compose logs -f session-router agent-mode1 agent-mode2 agent-mode3
 ```
 
 ### Step 5 - Verify services are running
 
 ```bash
-# Check all containers are up
+# Check all 8 containers are up
 docker compose ps
 
-# Test the agent API health endpoint
-curl http://localhost:8080/health
+# Test the session router health endpoint
+curl http://localhost:3000/health
 ```
 
 Expected health response:
@@ -294,35 +314,32 @@ Expected health response:
 ```json
 {
   "status": "ok",
-  "providers": {
-    "stt": "deepgram",
-    "tts": "cartesia",
-    "llm": "ollama"
-  },
-  "active_sessions": 0
+  "active_sessions": 0,
+  "modes": ["livekit", "pipecat", "hybrid"]
 }
 ```
 
 ### Step 6 - Open the browser UI
 
-Navigate to: **http://localhost:3000**
+Navigate to: **http://localhost:3000** (or your cloud IDE tunnel URL).
 
-You should see the dark UI with a blue orb and "Ready to connect" status.
+You should see the dark UI with the mode selection dropdown ("Mode 1: LiveKit", "Mode 2: Pipecat", "Mode 3: Hybrid"), a pulsing orb, and the Event Timeline side panel.
 
 ### Step 7 - Start a voice session
 
-1. Click **"Connect to Aria"**
-2. Your browser will ask for microphone permission; allow it
-3. The orb turns blue and pulses; you're live
-4. Speak in English or Hinglish
-5. The agent responds with voice (and transcript appears in the panel)
-6. Click **Disconnect** to end the session
+1. Select your desired runtime mode from the dropdown.
+2. Click **"Connect to Aria"**
+3. Your browser will ask for microphone permission; allow it
+4. The orb turns blue and pulses; you're live
+5. Speak in English or Hinglish
+6. The agent responds with voice (and transcript + timeline events appear in the panel)
+7. Click **Disconnect** to end the session
 
 ### Step 8 - Confirm it works end-to-end
 
-Try saying: _"Namaste, mera naam Arjun hai. What can you help me with?"_
+Try saying: _"Namaste, mera naam Arjun hai. Can you check appointment availability for tomorrow?"_
 
-The agent should respond within ~2–3 seconds (first response is slightly slower due to cold-start model loading). Subsequent responses should be ~300–500ms.
+The agent should respond within ~300–500ms, and you will see the exact timeline events (STT final, LLM first token, TTS first audio, Tool execution) rendering in real-time in the sidebar.
 
 ---
 
@@ -330,15 +347,23 @@ The agent should respond within ~2–3 seconds (first response is slightly slowe
 
 ### `docker-compose.yml`
 
-Defines four services:
+Defines eight production microservices connected over the custom `poc_network`:
 
 **livekit** - The WebRTC SFU. Handles all real-time audio routing between the browser and your agent. Runs in `--dev` mode which auto-accepts the dev API keys defined in `livekit.yaml`. Exposes 7880 (HTTP/WS), 7881 (TCP RTC), 7882/udp (UDP RTC).
 
-**redis** - Session state store. Currently used for pub/sub scaffolding. In this POC it's mostly a placeholder. The session registry lives in-memory in `main.py`. When you scale to multiple agent replicas, you'll move the registry here.
+**redis** - Session state store and high-throughput telemetry pub/sub message bus (`vrep:events:<session_id>:<mode>`).
 
-**agent** - The FastAPI + Pipecat Python service. This is the brain. It mounts the `./services/agent` directory as a volume, so code changes hot-reload via uvicorn without rebuilding the image.
+**session-router** - FastAPI entry gateway (port 8000). Generates unique `session_id` identifiers and proxies connection requests (`POST /session/join`) to the appropriate backend agent container based on the user's selected mode.
 
-**frontend** - A plain nginx container serving the single `index.html`. No build step needed. If you modify `index.html`, nginx picks up changes immediately.
+**agent-mode1** - Pure LiveKit SDK runtime (port 8081). Implements `VoicePipelineAgent` and `voice.AgentSession` adhering exactly to the `livekit-agents` v1.1.8 explicit lifecycle.
+
+**agent-mode2** - Pure Pipecat 1.2.0 runtime (port 8082). Implements `Pipeline`, `LiveKitTransport`, and `SileroVADAnalyzer` with a custom `EventEmitterProcessor` to intercept audio frames and broadcast timeline telemetry.
+
+**agent-mode3** - Hybrid Voice Runtime (port 8083). Custom async loop orchestrator managing bidirectional cognitive buffering and interruptible media pipelines.
+
+**event-bridge** - Telemetry interceptor (port 8090). Subscribes to Redis stream events and broadcasts formatted WebSocket JSON directly to the frontend timeline UI.
+
+**frontend** - Unified Nginx reverse proxy (port 3000). Serves `index.html` static assets and routes `/session/join` -> `session-router:8000`, `/debug/ws` -> `event-bridge:8090`, and `/livekit/` -> `livekit:7880`.
 
 ### `infra/livekit.yaml`
 
@@ -351,72 +376,67 @@ LiveKit server configuration for local development. Key settings:
 
 For production, you will replace this file with a config that enables TURN, sets a real domain, and uses proper key rotation.
 
-### `services/agent/config.py`
+### `shared/config.py`
 
-All configuration lives here as a Pydantic `Settings` class. Every field maps 1:1 to an environment variable. The benefit: if you try to start the service with a missing required key, it fails immediately with a clear error instead of crashing mid-call.
+All configuration lives here as a Pydantic `Settings` class shared across all Python containers. Every field maps 1:1 to an environment variable. The benefit: if you try to start the service with a missing required key, it fails immediately with a clear error instead of crashing mid-call.
 
 Key settings to understand:
 
-- `LIVEKIT_URL` vs `LIVEKIT_PUBLIC_URL` - two different URLs for the same LiveKit server. `LIVEKIT_URL` is used by the agent container internally (uses Docker service name `livekit`). `LIVEKIT_PUBLIC_URL` is returned to the browser and must be reachable from outside Docker (`localhost`).
+- `LIVEKIT_URL` vs `LIVEKIT_PUBLIC_URL` - two different URLs for the same LiveKit server. `LIVEKIT_URL` is used by the agent containers internally (uses Docker service name `livekit`). `LIVEKIT_PUBLIC_URL` is returned to the browser and must be reachable from outside Docker (`localhost` or cloud IDE tunnel).
 - `AGENT_LANGUAGE` - passed to Deepgram. `"multi"` enables automatic language detection. Use `"hi"` for Hindi-only, `"en-US"` for English-only.
 
-### `services/agent/main.py`
+### `shared/telemetry.py`
 
-The FastAPI application. Three responsibilities:
+Standardized observability helper. Defines `TelemetryEmitter` which publishes structured JSON payloads with nanosecond timestamps and trace IDs to Redis stream `vrep:events:<session_id>:<mode>`.
 
-**POST `/session/join`** — the entry point for every call. It generates a unique session ID, mints two LiveKit JWTs (one for the browser user, one for the agent), spawns a Pipecat pipeline as a background `asyncio.Task`, and returns the user token + room name to the browser.
+### `shared/tools/`
 
-**Session registry** (`_sessions` dict) — maps session IDs to asyncio Tasks. Allows you to cancel specific sessions via `DELETE /session/:id`. In this POC it's in-memory; for multi-replica deployments it moves to Redis.
+Transactional two-step appointment booking toolset (`check_availability` -> `book_appointment`). Ensures state carry-over across turns so the LLM doesn't hallucinate appointment details.
 
-**Lifespan handler** — runs on startup and shutdown. On shutdown it cancels all active session tasks, allowing Pipecat to drain its TTS queue and close LiveKit connections cleanly before the process exits.
+### `services/session-router/main.py`
 
-### `services/agent/pipeline/agent.py`
+The entry gateway. Three responsibilities:
 
-The core of the system. One instance of `run_agent_session()` runs per active call.
+**POST `/session/join`** — the entry point. Expects a JSON payload with `mode` ("livekit", "pipecat", or "hybrid"). Generates a unique `session_id`, mints user and agent JWTs, and forwards the session initialization request to the corresponding container (`agent-mode1:8080`, `agent-mode2:8080`, or `agent-mode3:8080`).
 
-**The pipeline assembly** is the critical section:
+**Session registry** — maintains global mapping of active `session_id` tokens across all three modes.
+
+### `services/agent-mode1/runtime/agent.py`
+
+Mode 1 runtime implementation. Uses `livekit-agents` v1.1.8 `VoicePipelineAgent` and `AgentSession`.
+- Configures observability, STT (`Deepgram`), LLM (`OpenAI`), TTS (`Cartesia`), and VAD (`Silero`).
+- Hooks into `@session.on("user_input_transcribed")` and `@session.on("agent_state_changed")` to emit standardized Redis telemetry.
+- Invokes `await session.start(agent, room=room)` to manage the WebRTC audio loop natively.
+
+### `services/agent-mode2/pipeline/agent.py`
+
+Mode 2 runtime implementation. Uses `pipecat-ai` 1.2.0 `Pipeline` and `LiveKitTransport`.
 
 ```python
 pipeline = Pipeline([
     transport.input(),           # Raw PCM from LiveKit
     stt,                         # Transcription
-    context_aggregator.user(),   # Append to conversation history
+    event_emitter.user(),        # Intercept UserStartedSpeakingFrame / InterruptionFrame
     llm,                         # Generate response tokens
     tts,                         # Synthesize audio
     transport.output(),          # Send audio back via LiveKit
-    context_aggregator.assistant(), # Record assistant turn
+    event_emitter.assistant(),   # Intercept TTSStartedFrame / TextFrame
 ])
 ```
 
-Pipecat connects these processors with internal async queues. Audio frames flow left to right. When `allow_interruptions=True`, Pipecat flushes the TTS queue and cancels pending LLM tokens the moment Silero VAD detects the user speaking again.
-
-**The greeting** (`on_first_participant_joined`) sends a `TextFrame` directly into the pipeline, bypassing STT and LLM entirely. This makes the first response instantaneous — it goes straight to TTS and out to the user.
-
-**VAD parameters** to tune:
-
-- `stop_secs=0.5` — how long silence after speech before it's considered end-of-turn. Lower = more responsive but cuts off people who pause mid-sentence. Recommended range: 0.4–0.8s.
-- `min_volume=0.6` — filters ambient noise. If the agent triggers on background sounds, raise this. If it misses quiet speakers, lower it.
-- `confidence=0.7` — Silero's internal speech/non-speech threshold. Don't change this unless you have a specific reason.
-
-### `services/agent/pipeline/providers/`
-
-Three files, each following the same pattern: a factory function that reads the `*_PROVIDER` env var and returns the appropriate Pipecat service object. This is the provider abstraction layer.
-
-**`stt.py`** — `create_stt_service()` returns either `DeepgramSTTService` or `GoogleSTTService`. Adding a new provider (e.g., Whisper) means adding one `elif` block here and nowhere else.
-
-**`tts.py`** — `create_tts_service()` returns either `CartesiaTTSService` or `ElevenLabsTTSService`. Note the `sample_rate=24000` setting on Cartesia — this must match the `audio_out_sample_rate` in the LiveKit transport params, or you get chipmunk/slowed audio.
-
-**`llm.py`** — `create_llm_service()` plus the `SYSTEM_PROMPT`. The system prompt is the most impactful thing you can tune for POC quality. The key constraint is verbosity: each sentence of LLM output is ~100–200ms of TTS synthesis, so a 5-sentence response adds ~1s of latency before the user hears anything.
+Pipecat connects these processors with internal async queues. When `allow_interruptions=True`, Pipecat flushes the TTS queue and cancels pending LLM tokens the moment Silero VAD detects the user speaking again.
 
 ### `services/frontend/index.html`
 
-A self-contained single-page app. No framework, no build step. Uses the LiveKit JS SDK loaded from CDN.
+A self-contained single-page app. No framework, no build step. Uses the LiveKit JS SDK loaded from CDN (`LivekitClient.Room`).
 
 The frontend is orchestrated by a rigorous `SessionController` class that guarantees stable transitions across 7 states: `DISCONNECTED`, `CONNECTING`, `CONNECTED`, `LISTENING`, `THINKING`, `TOOL_EXECUTION`, and `RESPONDING`.
 
 Key features:
-1. **Mute/Unmute**: Cleanly toggles `track.mute()` without dropping the WebRTC room.
-2. **Strict Disconnect Cleanup**: Clicking "End Call" destroys the audio context, removes rogue audio elements, and permits clean reconnection without browser refreshing.
+1. **Mode Selector**: Allows dynamic switching between Mode 1, Mode 2, and Mode 3.
+2. **Event Timeline Sidebar**: Connects to `/debug/ws` to stream real-time latency and lifecycle metrics.
+3. **Mute/Unmute**: Cleanly toggles `track.mute()` without dropping the WebRTC room.
+4. **Strict Disconnect Cleanup**: Clicking "End Call" destroys the audio context, removes rogue audio elements, and permits clean reconnection without browser refreshing.
 3. **Transcript Aggregation**: Prevents UI fragmentation by caching the active chat bubble and appending consecutive agent words into a single, cohesive paragraph.
 4. **Tool Sync Boundaries**: UI suspends chat flow into a dedicated `TOOL_EXECUTION` display when the agent calls tools, strictly rendering actions in timeline order.
 

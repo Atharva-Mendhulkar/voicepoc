@@ -16,7 +16,7 @@ async def check_availability(date: str, time: str) -> dict:
 
 async def get_weather(city: str) -> dict:
     await asyncio.sleep(0.2)
-    # Mock data — replace with OpenWeatherMap or similar
+    # Mock data — replace with OpenWeatherMap ya koi aur
     weather_data = {
         "Mumbai":    {"temp": 32, "condition": "Humid and partly cloudy", "humidity": 78},
         "Delhi":     {"temp": 38, "condition": "Hot and hazy", "humidity": 45},
@@ -32,7 +32,7 @@ async def get_weather(city: str) -> dict:
     }
 
 async def update_crm(field: str, value: str) -> dict:
-    await asyncio.sleep(0.4)  # simulate CRM write latency
+    await asyncio.sleep(0.4)  # CRM write latency MockData
     return {
         "success": True,
         "field_updated": field,
@@ -53,7 +53,7 @@ async def book_appointment(date: str, time: str, name: str = "Guest") -> dict:
         "message": f"Appointment booked for {name} on {date} at {time}. Booking ID: {booking_id}"
     }
 
-# Dispatch table — used by all three modes
+# Appointment tool — used by all three modes
 TOOL_HANDLERS = {
     "check_availability": check_availability,
     "book_appointment": book_appointment,

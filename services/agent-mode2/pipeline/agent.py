@@ -60,8 +60,14 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
     )
 
     stt = DeepgramSTTService(api_key=settings.deepgram_api_key)
-    tts = CartesiaTTSService(api_key=settings.cartesia_api_key, voice_id="sonic-english")
-    llm = OpenAILLMService(api_key=settings.openai_api_key, model="gpt-4o-mini")
+    tts = CartesiaTTSService(
+        api_key=settings.cartesia_api_key,
+        settings=CartesiaTTSService.Settings(voice="sonic-english")
+    )
+    llm = OpenAILLMService(
+        api_key=settings.openai_api_key,
+        settings=OpenAILLMService.Settings(model="gpt-4o-mini")
+    )
 
     pending_appointment = {"date": "", "time": ""}
 

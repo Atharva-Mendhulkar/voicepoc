@@ -5,7 +5,7 @@ import time
 from datetime import date
 
 from livekit import rtc
-from livekit.agents import llm
+from livekit.agents import llm, voice
 from livekit.agents.voice import Agent as VoicePipelineAgent
 from livekit.plugins import openai, deepgram, cartesia, silero
 
@@ -125,7 +125,8 @@ async def run_livekit_session(session_id: str, room_name: str, agent_token: str)
     try:
         await room.connect(settings.livekit_url, agent_token)
         logger.info(f"[MODE 1] Connected to room {room_name}")
-        session = agent.start(room)
+        session = voice.AgentSession()
+        await session.start(agent, room=room)
 
         @session.on("user_input_transcribed")
         def on_user_input_transcribed(event):
