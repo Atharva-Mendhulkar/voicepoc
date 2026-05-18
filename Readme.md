@@ -108,6 +108,99 @@ graph TD
 
 ---
 
+### Mode 1 Architecture: LiveKit SDK (`VoicePipelineAgent`)
+
+Mode 1 leverages the official `livekit-agents` (v1.1.8) framework. It relies on an explicit event-driven runtime session (`voice.AgentSession`) that natively connects to LiveKit WebRTC rooms.
+
+```mermaid
+graph TD
+    subgraph "Mode 1: LiveKit SDK Runtime"
+        Room[LiveKit WebRTC Room] <-->|Connect & Media| Session[voice.AgentSession]
+        
+        Agent[VoicePipelineAgent Blueprint] -.->|System Prompt & Tools| Session
+        
+        Session -->|Audio In| VAD[Silero VAD]
+        VAD -->|Stream PCM| STT[Deepgram Streaming STT]
+        STT -->|Transcript| LLM[OpenAI GPT-4o-mini]
+        LLM -->|Text Tokens| TTS[Cartesia Streaming TTS]
+        TTS -->|24kHz Audio Out| Room
+        
+        subgraph "Telemetry Hooks"
+            STT -->|user_input_transcribed| T1[TelemetryEmitter]
+            Session -->|agent_state_changed| T1
+            T1 -->|Publish JSON| Redis1[(Redis Stream)]
+        end
+        
+        subgraph "Native Tool Execution"
+            LLM <-->|Function Calling| Tools[AppointmentTools Handler]
+        end
+    end
+```
+
+**Key Architectural Characteristics**:
+- **Declarative Blueprint**: `VoicePipelineAgent` defines the instructions, language models, and registered toolsets.
+- **Session Lifecycle**: `voice.AgentSession` manages the active WebRTC connection, maintaining internal state machines across `initializing`, `listening`, `thinking`, and `speaking` states.
+- **Standardized Observability**: Native event hooks `@session.on("user_input_transcribed")` and `@session.on("agent_state_changed")` intercept state transitions to publish formatted telemetry to Redis without polluting cognitive logic.
+
+---
+
+### Mode 2 Architecture: Pipecat 1.2.0 (`Pipeline`)
+
+Mode 2 is built on the pure `pipecat-ai` (1.2.0) streaming frame processor. It models a voice conversation as a linear pipeline of asynchronous queues where discrete data frames (`AudioRawFrame`, `TranscriptionFrame`, `TextFrame`, `CancelFrame`) flow from left to right.
+
+```mermaid
+graph LR
+    subgraph "Mode 2: Pipecat Pipeline Frameflow"
+        In[LiveKitTransport In] --> STT[Deepgram STT]
+        STT --> EU[EventEmitter User]
+        EU --> LLM[OpenAI LLM]
+        LLM --> TTS[Cartesia TTS]
+        TTS --> Out[LiveKitTransport Out]
+        Out --> EA[EventEmitter Assistant]
+        
+        subgraph "Custom EventEmitterProcessor"
+            EU -.->|UserStartedSpeakingFrame| T2[TelemetryEmitter]
+            EU -.->|InterruptionFrame| T2
+            EA -.->|TTSStartedFrame / TextFrame| T2
+            T2 -->|Publish JSON| Redis2[(Redis Stream)]
+        end
+    end
+```
+
+**Key Architectural Characteristics**:
+- **Frame-Based Execution**: Every piece of media or metadata is a typed `Frame`. Audio chunks are pushed into `transport.input()` and flow downstream.
+- **Barge-in Interruption**: When Silero VAD detects user speech during assistant playback, Pipecat immediately pushes an `InterruptionFrame` and a `CancelFrame` downstream. This flushes the TTS queue and halts LLM generation within ~150ms.
+- **Custom Observability Processor**: To maintain 100% telemetry parity with Mode 1, we implemented a custom `EventEmitterProcessor` injected directly into the user and assistant context aggregation points. It intercepts timeline frames and broadcasts standardized payloads to Redis.
+
+---
+
+### Mode 3 Architecture: Hybrid Async Orchestrator
+
+Mode 3 represents a custom asynchronous loop orchestrator. It decouples the WebRTC media ingestion and playback threads from the cognitive reasoning layer, providing extreme flexibility for custom state machines and buffer management.
+
+```mermaid
+graph TD
+    subgraph "Mode 3: Hybrid Async Orchestrator"
+        RTC[LiveKit WebRTC Media] <--> Buffer[Bidirectional Media Buffer & VAD]
+        
+        Buffer -->|Speech Chunk| Worker1[Async STT Worker]
+        Worker1 -->|User Transcript| StateMgr[Conversation State Machine]
+        StateMgr <-->|Context & Tools| Cognition[Async LLM / Tool Engine]
+        Cognition -->|Response Tokens| Worker2[Async TTS Synthesis]
+        Worker2 -->|Audio Frames| Buffer
+        
+        StateMgr -->|Lifecycle & Latency Events| T3[TelemetryEmitter]
+        T3 -->|Publish JSON| Redis3[(Redis Stream)]
+    end
+```
+
+**Key Architectural Characteristics**:
+- **Decoupled Concurrency**: Separate `asyncio` task workers manage STT streaming, LLM token generation, and TTS synthesis independently.
+- **Granular Buffer Control**: Allows exact frame-by-frame inspection of incoming audio, supporting sophisticated custom VAD heuristics or multi-modal inputs.
+- **State Machine Isolation**: Conversation history and tool execution state are managed by an explicit state engine, guaranteeing causal consistency and preventing race conditions during rapid turns or network jitter.
+
+---
+
 ## 2. Repository Structure
 
 ```text
