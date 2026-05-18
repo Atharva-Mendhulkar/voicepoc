@@ -18,7 +18,7 @@ from pipecat.services.llm_service import FunctionCallParams
 from pipecat.adapters.schemas.tools_schema import ToolsSchema
 from pipecat.processors.aggregators.llm_response_universal import LLMContextAggregatorPair
 from pipecat.processors.aggregators.llm_context import LLMContext
-from pipecat.frames.frames import LLMMessagesAppendFrame, TextFrame
+from pipecat.frames.frames import LLMMessagesAppendFrame, TextFrame, TTSSpeakFrame
 
 from shared.config import settings
 from shared.tools.handlers import execute_tool
@@ -54,6 +54,7 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
         room_name=room_name,
         params=LiveKitParams(
             audio_out_enabled=True,
+            audio_out_sample_rate=24000,
             vad_enabled=True,
             vad_analyzer=SileroVADAnalyzer(params=VADParams(stop_secs=0.5)),
         ),
@@ -62,6 +63,7 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
     stt = DeepgramSTTService(api_key=settings.deepgram_api_key)
     tts = CartesiaTTSService(
         api_key=settings.cartesia_api_key,
+        sample_rate=24000,
         settings=CartesiaTTSService.Settings(model="sonic-english", voice=settings.cartesia_voice_id or "248be419-c632-4f23-adf1-5324ed7dbf1d")
     )
     llm = OpenAILLMService(
@@ -169,17 +171,21 @@ async def run_pipecat_session(session_id: str, room_name: str, agent_token: str)
     task = PipelineTask(pipeline, params=PipelineParams())
 
     @transport.event_handler("on_first_participant_joined")
-    async def on_first_participant_joined(transport, participant_id):
-        logger.info(f"[MODE 2] Participant {participant_id} joined LiveKit room")
-        asyncio.create_task(transport.send_message(
-            json.dumps({"type": "mode_info", "mode": "pipecat", "phase": 2, "status": "conversational"})
-        ))
-        greeting = "Hello! I'm Agent. You're connected in Pipecat-Only mode. How can I help?"
-        asyncio.create_task(telemetry.emit("tts.request.start", {"text": greeting}))
-        await task.queue_frames([LLMMessagesAppendFrame([{"role": "assistant", "content": greeting}], run_llm=False), TextFrame(greeting)])
-        asyncio.create_task(transport.send_message(
-            json.dumps({"type": "transcription", "participant": "agent", "text": greeting})
-        ))
+    async def on_first_participant_joined(transport, participant):
+        try:
+            pid = getattr(participant, "identity", str(participant))
+            logger.info(f"[MODE 2] Participant {pid} joined LiveKit room")
+            asyncio.create_task(transport.send_message(
+                json.dumps({"type": "mode_info", "mode": "pipecat", "phase": 2, "status": "conversational"})
+            ))
+            greeting = "Hello! I'm Agent. You're connected in Pipecat-Only mode. How can I help?"
+            asyncio.create_task(telemetry.emit("tts.request.start", {"text": greeting}))
+            await task.queue_frames([LLMMessagesAppendFrame([{"role": "assistant", "content": greeting}], run_llm=False), TTSSpeakFrame(greeting)])
+            asyncio.create_task(transport.send_message(
+                json.dumps({"type": "transcription", "participant": "agent", "text": greeting})
+            ))
+        except Exception as e:
+            logger.error(f"[MODE 2 Error in on_first_participant_joined] {e}", exc_info=True)
 
     @transport.event_handler("on_participant_left")
     async def on_participant_left(transport, participant_id, reason):

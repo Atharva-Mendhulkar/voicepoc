@@ -19,4 +19,4 @@ COPY services/agent-mode1 /app/services/agent-mode1
 ENV PYTHONPATH=/app:/app/services/agent-mode1
 WORKDIR /app/services/agent-mode1
 
-CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "/app"]
+CMD ["uvicorn", "main:app", "--host", "0.0.0.0", "--port", "8080", "--reload", "--reload-dir", "/app/services/agent-mode1"]
